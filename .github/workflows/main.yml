@@ -5,7 +5,7 @@ on:
   push:
     # 当前脚本分支有push就执行，用于代码调试
     branches:
-      - docker-autobuild
+      - sync_master
   # 定时执行：每半天（12小时）执行一次
   schedule:
     - cron:  '0 */12 * * *'
