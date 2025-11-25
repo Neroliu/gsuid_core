@@ -1,0 +1,82 @@
+# '同步 fork 官方 Repo 的 master 分支到这里的 master 分支 | Sync forked repo (official:master -> my_fork:master)'
+name: Sync forked repo (official:master -> my_fork:master)
+
+on:
+  push:
+    # 当前脚本分支有push就执行，用于代码调试
+    branches:
+      - docker-autobuild
+  # 定时执行：每半天（12小时）执行一次
+  schedule:
+    - cron:  '0 */12 * * *'
+  # 按键触发执行
+  workflow_dispatch:
+    inputs:
+      sync_test_mode:
+        description: '测试模式开始... | Fork Sync Test Mode...'
+        type: boolean
+        default: false
+
+jobs:
+  sync_latest_from_upstream:
+    runs-on: ubuntu-latest
+    name: 同步 fork 官方 Repo (官方:master -> 我的fork:master) | Sync forked repo (official:master -> my_fork:master)
+
+    steps:
+    # REQUIRED step
+    # Step 1: run a standard checkout action, provided by github
+    - name: 切换到要同步到的分支 (我的fork:master) | Checkout target repo
+      uses: actions/checkout@v3
+      with:
+        # optional: set the branch to checkout,
+        # ref 要与下面的 target_sync_branch 对应 | sync action checks out your 'target_sync_branch' anyway
+        ref:  master
+        # REQUIRED if your upstream repo is private (see wiki)
+        persist-credentials: false
+
+    # REQUIRED step
+    # Step 2: run the sync action
+    - name: 使用插件实现同步 | Sync upstream changes
+      id: sync
+      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+      with:
+        # 上游 repo，要同步的分支
+        upstream_sync_repo: Genshin-bots/gsuid_core
+        # 从 upstream_sync_branch 同步到 target_sync_branch 分支
+        upstream_sync_branch: master
+        target_sync_branch: master
+        # REQUIRED 'target_repo_token' exactly like this!
+        target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+        # 若上游 repo 是私有库，需要 SECRET，若是公共库则不需要
+        # upstream_repo_access_token: ${{ secrets.UPSTREAM_REPO_SECRET }}
+        # 测试模式参数，传入上面的环境变量，如果是测试模式，仅输出数据不做真正同步
+        test_mode: ${{ inputs.sync_test_mode }}
+
+    # Step 4: Display a sample message based on the sync output var 'has_new_commits'
+    - name: 展示 master 同步结果 | Show sync status
+      run: |
+        echo "Sync status: [${{ steps.sync.outputs.sync_status }}]"
+
+    # Step 5: Show latest commit messages and commit time for the forked repo
+    - name: 使用插件展示 repo 状态 | Show repo status
+      id: "git_info"
+      uses: YunaBraska/git-info-action@main
+      with:
+        workDir: '.'
+        ignore-files: '.java, .groovy, .jar'
+        branch-fallback: 'master'
+        tag-fallback: 'latest'
+        tag-match-pattern: 'v1.*'
+        fallback-commit-type: 'Commit'
+        fallback-commit-scope: '一些修改...'
+        commit-msg-with-footer: 'true'
+        max-changelog-length: 1000
+
+    - name: "输出当前 master 分支的最新信息 | Print Git Info"
+      run: |
+
+        echo "分支：[${{ steps.git_info.outputs.branch }}]"
+        echo "最近提交 SHA：[${{ steps.git_info.outputs.sha_latest }}]"
+        echo "最近更新时间：[${{ steps.git_info.outputs.repo_updated_at }}]"
+        echo "commit 类型：[${{ steps.git_info.outputs.commit_types }}]"
+        echo "修改内容：[${{ steps.git_info.outputs.change_log }}]"
