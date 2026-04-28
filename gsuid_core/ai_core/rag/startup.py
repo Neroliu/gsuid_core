@@ -5,12 +5,15 @@ from gsuid_core.server import on_core_start
 from gsuid_core.ai_core.register import get_all_tools
 from gsuid_core.ai_core.rag.tools import sync_tools
 
-from .base import init_embedding_model
+from .base import pre_download_models, init_embedding_model
 
 
 @on_core_start
 async def init_all():
     """初始化RAG模块的所有组件"""
+    # 0. 提前下载所有模型到缓存目录
+    pre_download_models()
+
     # 1. 初始化Embedding模型和Qdrant客户端
     init_embedding_model()
 
