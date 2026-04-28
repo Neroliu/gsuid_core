@@ -4,9 +4,13 @@ import os
 import json
 import uuid
 import hashlib
+import zipfile
+import tempfile
 import threading
 from typing import Final, Union
+from pathlib import Path
 
+import httpx
 from fastembed import TextEmbedding, SparseTextEmbedding
 from qdrant_client import AsyncQdrantClient
 from huggingface_hub import constants as hf_constants, snapshot_download
@@ -63,8 +67,126 @@ def _get_hf_endpoint() -> str:
     return ai_config.get_config("hf_endpoint").data
 
 
-def pre_download_models():
-    """使用huggingface_hub提前下载所有模型到缓存目录
+def _format_size(size_bytes: int) -> str:
+    """将字节数格式化为人类可读的大小"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
+
+
+async def _download_and_extract_zip(base_url: str, tag: str, zip_name: str, target_dir: Path) -> bool:
+    """从资源库下载zip文件并解压到目标目录（流式下载，带进度日志）
+
+    Args:
+        base_url: 资源库基础URL
+        tag: 资源站标签
+        zip_name: zip文件名（不含扩展名），如 "models_cache"
+        target_dir: 解压目标目录
+
+    Returns:
+        True 表示成功下载并解压，False 表示失败
+    """
+    zip_url = f"{base_url}/ai_core/{zip_name}.zip"
+    logger.info(f"🧠 [RAG] 尝试从资源库下载 {zip_name}.zip: {tag} {zip_url}")
+
+    tmp_path = None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+            async with client.stream("GET", zip_url) as response:
+                if response.status_code != 200:
+                    logger.warning(f"🧠 [RAG] 资源库下载 {zip_name}.zip 失败，HTTP状态码: {response.status_code}")
+                    return False
+
+                total_size = int(response.headers.get("content-length", 0))
+                if total_size > 0:
+                    logger.info(f"🧠 [RAG] {zip_name}.zip 文件大小: {_format_size(total_size)}")
+
+                # 流式写入临时文件
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+                downloaded = 0
+                last_log_bytes = 0
+                log_interval = 5 * 1024 * 1024  # 每5MB打印一次进度
+
+                with os.fdopen(tmp_fd, "wb") as tmp_file:
+                    async for chunk in response.aiter_bytes(chunk_size=65536):  # type: ignore
+                        if chunk:
+                            tmp_file.write(chunk)
+                            downloaded += len(chunk)
+
+                            # 定期打印下载进度
+                            if downloaded - last_log_bytes >= log_interval:
+                                if total_size > 0:
+                                    progress = downloaded / total_size * 100
+                                    logger.info(
+                                        f"🧠 [RAG] {zip_name}.zip 下载进度: "
+                                        f"{_format_size(downloaded)} / {_format_size(total_size)} ({progress:.1f}%)"
+                                    )
+                                else:
+                                    logger.info(f"🧠 [RAG] {zip_name}.zip 已下载: {_format_size(downloaded)}")
+                                last_log_bytes = downloaded
+
+                if downloaded == 0:
+                    logger.warning(f"🧠 [RAG] 资源库下载 {zip_name}.zip 失败，内容为空")
+                    return False
+
+                logger.info(f"🧠 [RAG] {zip_name}.zip 下载完成: {_format_size(downloaded)}，开始解压...")
+
+        # 解压到父目录，因为zip内部已包含同名文件夹（如 models_cache/models_cache）
+        parent_dir = target_dir.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(tmp_path, "r") as zf:
+            zf.extractall(parent_dir)
+
+        logger.success(f"🧠 [RAG] 资源库 {zip_name}.zip 解压完成: {tag} -> {target_dir}")
+        return True
+
+    except Exception as e:
+        logger.warning(f"🧠 [RAG] 资源库下载 {zip_name}.zip 失败: {e}")
+        return False
+    finally:
+        # 清理临时文件
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+async def _try_download_from_resource_lib() -> bool:
+    """尝试从资源库下载模型缓存zip包
+
+    Returns:
+        True 表示成功，False 表示失败
+    """
+    from gsuid_core.utils.download_resource.download_core import check_speed
+
+    try:
+        tag, base_url = await check_speed()
+        if not base_url:
+            logger.warning("🧠 [RAG] 资源库测速失败，无法获取可用资源站")
+            return False
+    except Exception as e:
+        logger.warning(f"🧠 [RAG] 资源库测速异常: {e}")
+        return False
+
+    # 下载 models_cache.zip
+    models_ok = await _download_and_extract_zip(base_url, tag, "models_cache", MODELS_CACHE)
+    if not models_ok:
+        return False
+
+    return True
+
+
+async def pre_download_models():
+    """提前下载所有模型到缓存目录
+
+    优先从资源库下载zip包并解压，如果失败则回退到HuggingFace下载。
 
     下载三个模型：
     1. Embedding模型: Qdrant/bge-small-zh-v1.5 -> MODELS_CACHE
@@ -73,6 +195,15 @@ def pre_download_models():
     """
     if not is_enable_ai():
         return
+
+    # 优先尝试从资源库下载zip包
+    logger.info("🧠 [RAG] 优先尝试从资源库下载模型缓存...")
+    resource_ok = await _try_download_from_resource_lib()
+    if resource_ok:
+        logger.success("🧠 [RAG] 资源库模型缓存下载完成，跳过HuggingFace下载")
+        return
+
+    logger.info("🧠 [RAG] 资源库下载失败，回退到HuggingFace下载...")
 
     hf_endpoint = _get_hf_endpoint()
     # 设置HF_ENDPOINT环境变量，并同步更新huggingface_hub.constants.ENDPOINT

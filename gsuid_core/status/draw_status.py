@@ -7,6 +7,7 @@ from PIL import Image, ImageOps, ImageDraw
 
 import gsuid_core.global_val as gv
 from gsuid_core.pool import to_thread
+from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.version import __version__
 from gsuid_core.utils.fonts.fonts import core_font
@@ -488,7 +489,13 @@ async def draw_plugins_status():
             )
 
             for indexj, j in enumerate(status):
-                badge = await draw_badge(j, await status[j]())
+                try:
+                    _value = await status[j]()
+                except Exception as e:
+                    logger.error(f"调用插件 {i} 的状态函数时发生错误: {e}")
+                    _value = "未知"
+
+                badge = await draw_badge(j, _value)
                 plugin_bar.paste(
                     badge,
                     (605 + 210 * indexj, 11),

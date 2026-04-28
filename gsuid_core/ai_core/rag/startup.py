@@ -12,7 +12,7 @@ from .base import pre_download_models, init_embedding_model
 async def init_all():
     """初始化RAG模块的所有组件"""
     # 0. 提前下载所有模型到缓存目录
-    pre_download_models()
+    await pre_download_models()
 
     # 1. 初始化Embedding模型和Qdrant客户端
     init_embedding_model()

@@ -7,7 +7,7 @@ import importlib
 import subprocess
 import importlib.util
 from types import ModuleType
-from typing import Set, Dict, List, Tuple, Union, Callable, Optional
+from typing import Any, Set, Dict, List, Tuple, Union, TypeVar, Callable, Optional, overload
 from pathlib import Path
 from importlib import metadata
 from itertools import groupby
@@ -24,10 +24,13 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "packaging"])
     from packaging.requirements import Requirement
 
+
 from gsuid_core.bot import _Bot
 from gsuid_core.config import core_config
 from gsuid_core.logger import logger
 from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 auto_install_dep: bool = core_plugins_config.get_config("AutoInstallDep").data
 auto_update_dep: bool = core_plugins_config.get_config("AutoUpdateDep").data
@@ -92,6 +95,16 @@ def on_core_start(
     if func is not None:
         return decorator(func)
     return decorator
+
+
+# 不带括号使用时（@on_core_shutdown），直接传入了 func，返回原函数类型 F
+@overload
+def on_core_shutdown(func: F, /) -> F: ...
+
+
+# 带括号使用时（@on_core_shutdown(priority=1)），func 默认是 None，返回一个装饰器
+@overload
+def on_core_shutdown(func: None = None, /, priority: int = 0) -> Callable[[F], F]: ...
 
 
 def on_core_shutdown(
