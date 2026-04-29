@@ -84,7 +84,9 @@ class MemoryContext:
             parts.append(f"【已知事实】\n{facts_text if facts_text else '暂无已知事实'}")
 
         if self.episodes:
-            hist_text = "\n".join(f"[{ep['valid_at'][:10]}] {ep['content'][:6000]}" for ep in self.episodes[:5])
+            hist_text = "\n".join(
+                f"[{ep['valid_at'][:16].replace('T', ' ')}] {ep['content'][:6000]}" for ep in self.episodes[:5]
+            )
             parts.append(f"【历史对话片段】\n{hist_text if hist_text else '暂无历史对话'}")
 
         result = "\n\n".join(parts)

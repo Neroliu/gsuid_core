@@ -5,7 +5,7 @@ PydanticAI Agent 核心模块
 
 import time
 import asyncio
-from typing import Any, Set, Dict, List, Union, Literal, TypeVar, Optional, Sequence, overload
+from typing import Any, Set, List, Union, Literal, TypeVar, Optional, Sequence, overload
 
 import httpx
 from pydantic_ai import Agent
@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserContent,
     ModelMessage,
+    ModelRequest,
     ThinkingPart,
     ToolCallPart,
     ModelResponse,
@@ -43,18 +44,18 @@ def _truncate_history_with_tool_safety(
     max_history: int,
 ) -> List[ModelMessage]:
     """
-    安全截断 history，确保 ToolCallPart 和 ToolReturnPart 保持配对。
+    安全截断 history，确保保留的消息中 ToolCallPart 和 ToolReturnPart 完全配对。
 
     问题：如果简单地从末尾截断 history，可能导致 ToolReturnPart 被保留
-    但其对应的 ToolCallPart 被丢弃，从而在下一轮请求时出现
+    但其对应的 ToolCallPart 被丢弃（在被截断的前半部分），从而在下一轮请求时出现
     "tool result's tool id not found" 错误。
 
     解决策略：
-    1. 从头扫描所有消息，收集所有 tool_call_id 及其出现位置
-    2. ToolCallPart 出现在 ModelResponse 中，ToolReturnPart 出现在 ModelRequest 中
-    3. 追踪每个 tool_call_id 的 call 和 return 是否配对
-    4. 如果截断点落在未配对的范围内，则扩展截断点
-    5. 确保所有保留的 ToolReturnPart 都有对应的 ToolCallPart
+    1. 先做一次试探性截断：保留最后 max_history 条消息
+    2. 扫描截断结果，收集所有保留的 ToolReturnPart 的 tool_call_id
+    3. 扫描截断结果，收集所有保留的 ToolCallPart 的 tool_call_id
+    4. 如果有 return 找不到对应的 call，说明截断点切到了 tool call/return 对的中间
+    5. 向前移动截断点，直到所有保留的 return 都有对应的 call
 
     Args:
         history: 原始消息历史
@@ -66,70 +67,60 @@ def _truncate_history_with_tool_safety(
     if len(history) <= max_history:
         return history
 
-    from pydantic_ai.messages import ModelRequest
-
-    # 第一步：扫描所有消息，收集 tool_call_id 的位置和类型
-    # call_ids: 记录哪些 tool_call_id 有 ToolCallPart（出现在 ModelResponse）
-    # return_ids: 记录哪些 tool_call_id 有 ToolReturnPart（出现在 ModelRequest）
-    # call_positions: 每个 tool_call_id 的 ToolCallPart 所在的消息索引
-    # return_positions: 每个 tool_call_id 的 ToolReturnPart 所在的消息索引
-    call_ids: Set[str] = set()
-    return_ids: Set[str] = set()
-    call_positions: Dict[str, List[int]] = {}
-    return_positions: Dict[str, List[int]] = {}
-
-    for idx, msg in enumerate(history):
-        if isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, ToolCallPart):
-                    call_ids.add(part.tool_call_id)
-                    if part.tool_call_id not in call_positions:
-                        call_positions[part.tool_call_id] = []
-                    call_positions[part.tool_call_id].append(idx)
-        elif isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, ToolReturnPart):
-                    return_ids.add(part.tool_call_id)
-                    if part.tool_call_id not in return_positions:
-                        return_positions[part.tool_call_id] = []
-                    return_positions[part.tool_call_id].append(idx)
-
-    # 第二步：找出孤立的 tool return（有 return 但没有 call）
-    orphaned_returns = return_ids - call_ids
-
-    if not orphaned_returns:
-        # 没有孤立的 tool return，可以安全地从末尾截断
-        truncated = history[-max_history:]
-        logger.debug(f"🧠 [GsCoreAIAgent] 安全截断 history: {len(history)} -> {len(truncated)} (无孤立 tool return)")
-        return truncated
-
-    # 第三步：找到所有包含孤立 tool return 的消息位置
-    orphaned_msg_indices: Set[int] = set()
-    for tool_call_id in orphaned_returns:
-        if tool_call_id in return_positions:
-            orphaned_msg_indices.update(return_positions[tool_call_id])
-
-    # 第四步：确定截断点
+    # 从 max_history 开始，逐步扩大保留范围，直到 tool call/return 完全配对
     truncate_index = len(history) - max_history
 
-    # 检查是否有孤立的 msg indices 在截断点之后
-    orphaned_in_tail = [i for i in orphaned_msg_indices if i >= truncate_index]
+    while truncate_index > 0:
+        truncated = history[truncate_index:]
 
-    if orphaned_in_tail:
-        # 需要扩展截断范围，确保孤立的 tool return 被包含或连同其 call 一起被保留
-        min_orphaned_idx = min(orphaned_in_tail)
-        # 扩展截断范围，留出更多空间确保配对完整
-        new_truncate_index = max(0, min_orphaned_idx - 5)
-        truncated = history[new_truncate_index:]
-        logger.warning(
-            f"🧠 [GsCoreAIAgent] 检测到 {len(orphaned_returns)} 个孤立 tool return，"
-            f"扩展截断范围: {len(history)} -> {len(truncated)} (从索引 {new_truncate_index} 开始)"
-        )
-        return truncated
+        # 收集截断结果中所有 ToolCallPart 的 tool_call_id
+        retained_call_ids: Set[str] = set()
+        # 收集截断结果中所有 ToolReturnPart 的 tool_call_id
+        retained_return_ids: Set[str] = set()
 
-    truncated = history[-max_history:]
-    logger.debug(f"🧠 [GsCoreAIAgent] 安全截断 history: {len(history)} -> {len(truncated)}")
-    return truncated
+        for msg in truncated:
+            if isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    if isinstance(part, ToolCallPart):
+                        retained_call_ids.add(part.tool_call_id)
+            elif isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        retained_return_ids.add(part.tool_call_id)
+
+        # 找出截断结果中的孤立 return（有 return 但没有对应的 call）
+        orphaned = retained_return_ids - retained_call_ids
+
+        if not orphaned:
+            # 所有保留的 return 都有对应的 call，截断安全
+            logger.debug(
+                f"🧠 [GsCoreAIAgent] 安全截断 history: {len(history)} -> {len(truncated)} (截断点: {truncate_index})"
+            )
+            return truncated
+
+        # 有孤立 return，需要向前移动截断点
+        # 找到所有孤立 return 所在的消息索引（相对于原始 history）
+        min_orphaned_idx = len(history)  # 初始化为最大值
+        for idx, msg in enumerate(history):
+            if idx < truncate_index:
+                continue  # 只看截断范围内的
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart) and part.tool_call_id in orphaned:
+                        min_orphaned_idx = min(min_orphaned_idx, idx)
+
+        # 向前移动截断点到孤立 return 之前，再留 2 条消息的缓冲
+        new_truncate_index = max(0, min_orphaned_idx - 2)
+        if new_truncate_index >= truncate_index:
+            # 安全阀：如果无法继续前移，直接保留全部历史
+            logger.warning(f"🧠 [GsCoreAIAgent] 无法安全截断 history，保留全部 {len(history)} 条")
+            return history
+
+        truncate_index = new_truncate_index
+
+    # truncate_index == 0，保留全部历史
+    logger.debug(f"🧠 [GsCoreAIAgent] 安全截断 history: {len(history)} -> {len(history)} (保留全部)")
+    return history
 
 
 class GsCoreAIAgent:

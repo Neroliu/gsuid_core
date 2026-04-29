@@ -74,7 +74,7 @@ class HistoryManager:
 
     DEFAULT_MAX_MESSAGES = 40
     CLEANUP_INTERVAL = 3600  # 清理检查间隔（秒）
-    IDLE_THRESHOLD = 86400  # 空闲阈值（秒），默认1天
+    IDLE_THRESHOLD = 1800  # 空闲阈值（秒），默认30分钟
     MAX_AI_HISTORY_LENGTH = 30  # AI会话最大历史长度
 
     def __init__(self, max_messages: int = DEFAULT_MAX_MESSAGES):

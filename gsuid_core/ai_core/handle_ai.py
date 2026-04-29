@@ -13,6 +13,7 @@ AI聊天处理模块
 """
 
 import asyncio
+from datetime import datetime
 
 from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
@@ -115,6 +116,11 @@ async def handle_ai_chat(bot: Bot, event: Event):
             # 步骤 4: 准备用户消息
             # ============================================================
             user_messages = prepare_content_payload(event)
+
+            # 运行时注入当前时间
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+            if isinstance(user_messages, list) and len(user_messages) > 0 and isinstance(user_messages[0], str):
+                user_messages[0] += f"\n\n【当前时间】{current_time}"
 
             # 第二层：智能摘要（在安全范围内对长文本进行摘要）
             if len(event.raw_text) > MAX_SUMMARY_LENGTH:
