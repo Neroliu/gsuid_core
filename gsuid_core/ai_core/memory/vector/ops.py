@@ -58,44 +58,43 @@ _sparse_degrade_last_log = 0.0
 
 
 def _embed(text: str) -> list[float]:
-    """同步调用 fastembed（fastembed 本身是 CPU 同步接口）"""
-    from gsuid_core.ai_core.rag.base import embedding_model
+    """同步单条嵌入"""
+    from gsuid_core.ai_core.rag.base import embedding_provider
 
-    if embedding_model is None:
-        raise RuntimeError("embedding_model 未初始化，请检查 rag/base.py 的 init_embedding_model()")
-    vectors = list(embedding_model.embed([text]))
-    return vectors[0].tolist()
+    if embedding_provider is None:
+        raise RuntimeError("embedding_provider 未初始化，请检查 rag/base.py 的 init_embedding_model()")
+    return embedding_provider.embed_single_sync(text)
 
 
 def _embed_batch(texts: list[str]) -> list[list[float]]:
-    """同步批量调用 fastembed，利用其原生批量接口一次处理多条文本。
+    """同步批量嵌入，利用底层批量接口一次处理多条文本。
 
     相比逐条调用 _embed，批量接口可减少 Python↔C++ 上下文切换开销，
     在 45 条文本场景下性能提升约 10-40x。
     """
-    from gsuid_core.ai_core.rag.base import embedding_model
+    from gsuid_core.ai_core.rag.base import embedding_provider
 
-    if embedding_model is None:
-        raise RuntimeError("embedding_model 未初始化，请检查 rag/base.py 的 init_embedding_model()")
-    return [v.tolist() for v in embedding_model.embed(texts)]
+    if embedding_provider is None:
+        raise RuntimeError("embedding_provider 未初始化，请检查 rag/base.py 的 init_embedding_model()")
+    return embedding_provider.embed_sync(texts)
 
 
 async def _embed_async(text: str) -> list[float]:
-    """异步包装 _embed，将同步 CPU 计算移入有界线程池，避免阻塞事件循环"""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_EMBED_EXECUTOR, _embed, text)
+    """异步单条嵌入（直接使用 provider 的异步接口）"""
+    from gsuid_core.ai_core.rag.base import embedding_provider
+
+    if embedding_provider is None:
+        raise RuntimeError("embedding_provider 未初始化，请检查 rag/base.py 的 init_embedding_model()")
+    return await embedding_provider.embed_single(text)
 
 
 async def _embed_batch_async(texts: list[str]) -> list[list[float]]:
-    """异步包装 _embed_batch，使用专用单线程执行器。
+    """异步批量嵌入（直接使用 provider 的异步接口）"""
+    from gsuid_core.ai_core.rag.base import embedding_provider
 
-    不使用 _EMBED_EXECUTOR（4 线程），因为 FastEmbed/ONNX Runtime 自带多线程池，
-    Python 层多线程包装会导致线程过度订阅（Thread Oversubscription），
-    CPU 上下文切换灾难反而比单线程更慢。
-    使用 max_workers=1 的专用执行器，确保 ONNX 独占 CPU 资源。
-    """
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_EMBED_BATCH_EXECUTOR, _embed_batch, texts)
+    if embedding_provider is None:
+        raise RuntimeError("embedding_provider 未初始化，请检查 rag/base.py 的 init_embedding_model()")
+    return await embedding_provider.embed(texts)
 
 
 def _sparse_embed(text: str) -> Optional[SparseVector]:

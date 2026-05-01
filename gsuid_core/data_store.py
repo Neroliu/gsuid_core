@@ -56,6 +56,9 @@ gscore_data_path = get_res_path("GsCore")
 error_mark_path = get_res_path(["logs", "error_reports"])
 CONFIGS_PATH = get_res_path("configs")
 
+# 插件独立配置目录 / Per-plugin config directory
+PLUGINS_CONFIGS_PATH = get_res_path("plugins_configs")
+
 # 主题配置路径 / Theme Config Path
 THEME_CONFIG_PATH = gs_data_path / "theme_config.json"
 

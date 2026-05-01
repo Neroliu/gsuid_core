@@ -445,7 +445,7 @@ async def update_framework_config_item(
     request: Request,
     config_name: str,
     item_name: str,
-    value: Any = Body(...),
+    value: Any = Body(..., embed=True),
     _user: Dict = Depends(require_auth),
 ):
     """

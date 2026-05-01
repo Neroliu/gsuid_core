@@ -1,12 +1,12 @@
 import os
 import time
 import asyncio
+import concurrent.futures
 from typing import Dict, Optional
 from pathlib import Path
 from urllib.parse import unquote
 
 import httpx
-import aiohttp
 from bs4 import BeautifulSoup
 
 from gsuid_core.logger import logger
@@ -15,57 +15,71 @@ from .download_file import download
 
 global_tag, global_url = "", ""
 NOW_SPEED_TEST = False
+_SPEED_TEST_DONE = False  # 标记是否已完成过一次测速（即使结果为空也不再重复）
 
 
-async def check_url(tag: str, url: str):
-    async with httpx.AsyncClient() as client:
-        try:
-            start_time = time.time()
-            response = await client.get(url)
+def _sync_check_url(tag: str, url: str):
+    """同步版测速，在线程池中并发执行，不受 event loop 阻塞影响"""
+    try:
+        start_time = time.time()
+        with httpx.Client(timeout=httpx.Timeout(connect=3.0, read=5.0, write=3.0, pool=3.0)) as client:
+            response = client.get(url)
             elapsed_time = time.time() - start_time
-            if response.status_code == 200:
-                if "Index of /" in response.text:
-                    logger.debug(f"⌛ [测速] {tag} {url} 延时: {elapsed_time}")
-                    return tag, url, elapsed_time
-                else:
-                    logger.info(f"⚠  {tag} {url} 未超时但失效...")
-                    return tag, url, float("inf")
+            if response.status_code == 200 and "Index of /" in response.text:
+                logger.debug(f"⌛ [测速] {tag} {url} 延时: {elapsed_time}")
+                return tag, url, elapsed_time
             else:
-                logger.info(f"⚠  {tag} {url} 超时...")
+                logger.info(f"⚠  {tag} {url} 未超时但失效...")
                 return tag, url, float("inf")
-        except aiohttp.ClientError:
-            logger.info(f"⚠  {tag} {url} 超时...")
-            return tag, url, float("inf")
+    except Exception as e:
+        logger.debug(f"⚠  {tag} {url} 连接失败: {type(e).__name__}")
+        return tag, url, float("inf")
 
 
-async def find_fastest_url(urls: Dict[str, str]):
-    tasks = []
-    for tag in urls:
-        tasks.append(asyncio.create_task(check_url(tag, urls[tag])))
+def _blocking_find_fastest(urls: Dict[str, str]):
+    """
+    纯同步函数：在线程池内并发测速，wait 最多 10 秒。
+    由 run_in_executor 调用，完全不占用 event loop 线程。
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(urls)) as executor:
+        futures = {executor.submit(_sync_check_url, tag, url): tag for tag, url in urls.items()}
+        done, not_done = concurrent.futures.wait(futures.keys(), timeout=35.0)
+        for f in not_done:
+            f.cancel()
+        if not_done:
+            logger.warning(f"[测速] {len(not_done)} 个节点测速超时，使用已完成结果")
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    fastest_tag: str = ""
-    fastest_url: str = ""
-    fastest_time = float("inf")
-
-    for result in results:
-        if isinstance(result, (Exception, BaseException)):
+    fastest_tag, fastest_url, fastest_time = "", "", float("inf")
+    for f in done:
+        try:
+            tag, url, elapsed_time = f.result()
+            if elapsed_time < fastest_time:
+                fastest_tag, fastest_url, fastest_time = tag, url, elapsed_time
+        except Exception:
             continue
-        tag, url, elapsed_time = result
-        if elapsed_time < fastest_time:
-            fastest_url = url
-            fastest_time = elapsed_time
-            fastest_tag = tag
 
     return fastest_tag, fastest_url
 
 
-async def check_speed():
-    global global_tag
-    global global_url
-    global NOW_SPEED_TEST
+async def find_fastest_url(urls: Dict[str, str]):
+    """
+    异步入口：把同步阻塞的测速整体丢进 executor，
+    event loop 在此期间完全不阻塞，可以正常调度其他协程。
+    """
+    loop = asyncio.get_event_loop()
+    fastest_tag, fastest_url = await loop.run_in_executor(None, _blocking_find_fastest, urls)
+    return fastest_tag, fastest_url
 
-    if (not global_tag or not global_url) and not NOW_SPEED_TEST:
+
+async def check_speed():
+    global global_tag, global_url, NOW_SPEED_TEST, _SPEED_TEST_DONE
+
+    # 已测速过（不管结果是否为空），直接返回缓存值，不再重复测速
+    if _SPEED_TEST_DONE:
+        return global_tag, global_url
+
+    # 第一个到达的协程负责测速
+    if not NOW_SPEED_TEST:
         NOW_SPEED_TEST = True
         logger.info("[GsCore资源下载]测速中...")
 
@@ -85,16 +99,19 @@ async def check_speed():
 
         TAG, BASE_URL = await find_fastest_url(URL_LIB)
         global_tag, global_url = TAG, BASE_URL
-
-        logger.info(f"🚀 最快资源站: {TAG} {BASE_URL}")
+        _SPEED_TEST_DONE = True  # 无论结果如何，标记为已完成
         NOW_SPEED_TEST = False
+
+        if TAG:
+            logger.info(f"🚀 最快资源站: {TAG} {BASE_URL}")
+        else:
+            logger.warning("[测速] 未找到可用资源站，资源下载功能将不可用")
+
         return TAG, BASE_URL
 
-    if NOW_SPEED_TEST:
-        while True:
-            if not NOW_SPEED_TEST:
-                return global_tag, global_url
-            await asyncio.sleep(1)
+    # 其他协程等待测速完成
+    while NOW_SPEED_TEST:
+        await asyncio.sleep(0.5)
 
     return global_tag, global_url
 

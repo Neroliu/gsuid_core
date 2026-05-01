@@ -46,8 +46,9 @@
     - [10.11 配置项](#1011-配置项)
     - [10.12 与现有模块的集成](#1012-与现有模块的集成)
     - [10.13 记忆统计](#1013-记忆统计)
-11. [完整流程图](#11-完整流程图)
-12. [附录](#附录)
+11. [嵌入模型提供方抽象层](#11-嵌入模型提供方抽象层)
+12. [完整流程图](#12-完整流程图)
+13. [附录](#附录)
    - [D. 已知问题汇总](#d-已知问题汇总)
 
 ---
@@ -66,7 +67,7 @@ gsuid_core/ai_core/
 ├── models.py            # 数据模型
 ├── normalize.py         # 查询规范化 (已移至子模块)
 ├── register.py          # 工具注册
-├── resource.py          # 资源管理
+├── resource.py          # 资源管理 (含 MCP_CONFIGS_PATH)
 ├── utils.py             # 工具函数
 ├── configs/             # 配置文件
 │   ├── __init__.py
@@ -120,6 +121,7 @@ gsuid_core/ai_core/
 ├── rag/                  # RAG 知识库
 │   ├── __init__.py
 │   ├── base.py
+│   ├── embedding.py      # 嵌入模型提供方抽象层（local/openai）
 │   ├── image_rag.py
 │   ├── knowledge.py
 │   ├── reranker.py
@@ -173,6 +175,11 @@ gsuid_core/ai_core/
 │   ├── search.py
 │   ├── storage.py
 │   └── vector_store.py
+├── mcp/                  # MCP (Model Context Protocol) 工具集成
+│   ├── __init__.py       # 模块导出
+│   ├── client.py         # MCP 客户端（基于 fastmcp）
+│   ├── config_manager.py # MCP 配置管理器（增删改查）
+│   └── startup.py        # 启动时自动注册 MCP 工具
 └── web_search/           # Web 搜索
     ├── __init__.py
     └── search.py
@@ -876,6 +883,7 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 | `buildin` | 默认内置工具 | 主Agent始终加载 | 知识库检索、Web搜索、查询记忆 |
 | `common` | 通常工具 | 按需加载，用户明确需要时 | 定时任务管理、获取自身信息 |
 | `default` | 子Agent工具 | 由子Agent使用 | 文件操作、日期获取、系统命令 |
+| `mcp` | MCP 外部工具 | 启动时自动注册，按需加载 | 用户自定义的 MCP 服务器工具 |
 
 **加载优先级**: `self` > `buildin` > `common`
 
@@ -1009,7 +1017,93 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 
 > **注意**：这两个工具函数已实现但 `@ai_tools` 装饰器被注释掉，暂未作为 AI 工具注册。主Agent 通过 `gs_agent.py` 中的 `search_tools()` 函数实现类似的动态工具发现能力。
 
-#### 5.5.11 核心函数
+#### 5.5.11 MCP 工具集成 (Model Context Protocol)
+
+**文件位置**: [`gsuid_core/ai_core/mcp/`](gsuid_core/ai_core/mcp/)
+
+系统支持通过 MCP (Model Context Protocol) 协议集成外部工具服务器。用户可以通过 WebConsole API 自由添加 MCP 服务器配置，框架启动时自动连接服务器并将 MCP 工具注册为 AI 工具，使 AI 可以自由调用。
+
+**模块结构**:
+
+```
+mcp/
+├── __init__.py         # 模块导出
+├── client.py           # MCP 客户端（基于 fastmcp，stdio 传输）
+├── config_manager.py   # MCP 配置管理器（JSON 文件存储）
+└── startup.py          # 启动时自动注册 MCP 工具
+```
+
+**配置存储**: `data/ai_core/mcp_configs/{config_id}.json`
+
+```json
+{
+    "name": "MiniMax",
+    "command": "uvx",
+    "args": ["minimax-coding-plan-mcp"],
+    "env": {"MINIMAX_API_KEY": "your_key"},
+    "enabled": true
+}
+```
+
+**启动注册流程**:
+
+```
+框架启动 (on_core_start, priority=5)
+    │
+    ├── 1. mcp_config_manager.get_enabled_configs()
+    │   └── 读取 data/ai_core/mcp_configs/*.json 中 enabled=true 的配置
+    │
+    ├── 2. 对每个配置创建 MCPClient
+    │   └── MCPClient(name, command, args, env)
+    │
+    ├── 3. client.list_tools() 获取 MCP 服务器工具列表
+    │   └── 通过 stdio 传输连接 MCP 服务器
+    │
+    ├── 4. 为每个 MCP 工具动态创建包装函数
+    │   ├── 解析 input_schema 生成正确的函数签名
+    │   ├── 注入 RunContext[ToolContext] 上下文
+    │   └── 注册到 _TOOL_REGISTRY["mcp"] 分类
+    │
+    └── 5. 工具命名规则: mcp_{server_name}_{tool_name}
+        └── 避免不同 MCP 服务器之间的工具名冲突
+```
+
+**工具调用流程**:
+
+```
+AI 决策调用 MCP 工具
+    │
+    ├── 1. PydanticAI 从 _TOOL_REGISTRY 获取工具
+    │
+    ├── 2. 调用 mcp_tool_wrapper(ctx, **kwargs)
+    │   └── 过滤 None 值的可选参数
+    │
+    ├── 3. MCPClient.call_tool(tool_name, arguments)
+    │   ├── 创建 StdioTransport
+    │   ├── 建立连接
+    │   ├── 执行工具调用
+    │   └── 返回 MCPToolResult
+    │
+    └── 4. 返回文本结果给 AI
+        ├── 成功: 返回工具输出文本
+        └── 失败: 返回错误信息
+```
+
+**WebConsole API 端点**:
+
+| 方法 | 端点 | 功能 |
+|------|------|------|
+| GET | `/api/ai/mcp/list` | 获取所有 MCP 配置列表 |
+| GET | `/api/ai/mcp/{config_id}` | 获取指定配置详情 |
+| POST | `/api/ai/mcp` | 创建新 MCP 配置 |
+| PUT | `/api/ai/mcp/{config_id}` | 更新 MCP 配置 |
+| DELETE | `/api/ai/mcp/{config_id}` | 删除 MCP 配置 |
+| POST | `/api/ai/mcp/{config_id}/toggle` | 切换启用/禁用状态 |
+| POST | `/api/ai/mcp/reload` | 热重载所有配置并重新注册工具 |
+
+**热重载**: 通过 `POST /api/ai/mcp/reload` 可以在运行时重新加载所有 MCP 配置并重新注册工具，无需重启服务。
+
+#### 5.5.12 核心函数
 
 ```python
 def get_main_agent_tools() -> ToolList:
@@ -1774,7 +1868,71 @@ from gsuid_core.ai_core.buildin_tools.scheduler import (
 
 ## 8. WebConsole API 与配置热重载
 
-### 7.1 Persona API 端点
+### 8.0 MCP 配置 API
+
+**文件位置**: [`gsuid_core/webconsole/mcp_config_api.py`](gsuid_core/webconsole/mcp_config_api.py)
+
+MCP 配置 API 允许用户通过前端自由管理 MCP 服务器配置，支持增删改查、启用/禁用和热重载。
+
+| 方法 | 端点 | 功能 |
+|------|------|------|
+| GET | `/api/ai/mcp/list` | 获取所有 MCP 配置列表 |
+| GET | `/api/ai/mcp/{config_id}` | 获取指定配置详情 |
+| POST | `/api/ai/mcp` | 创建新 MCP 配置 |
+| PUT | `/api/ai/mcp/{config_id}` | 更新 MCP 配置 |
+| DELETE | `/api/ai/mcp/{config_id}` | 删除 MCP 配置 |
+| POST | `/api/ai/mcp/{config_id}/toggle` | 切换启用/禁用状态 |
+| POST | `/api/ai/mcp/reload` | 热重载所有配置并重新注册工具 |
+
+**创建配置请求体**:
+
+```json
+{
+    "name": "MiniMax",
+    "command": "uvx",
+    "args": ["minimax-coding-plan-mcp"],
+    "env": {"MINIMAX_API_KEY": "your_key"},
+    "enabled": true
+}
+```
+
+**热重载**: `POST /api/ai/mcp/reload` 会清除已注册的 MCP 工具，重新加载配置文件，并重新连接所有启用的 MCP 服务器注册工具。
+
+### 8.0.1 嵌入模型配置 API
+
+**文件位置**: [`gsuid_core/webconsole/embedding_config_api.py`](gsuid_core/webconsole/embedding_config_api.py)
+
+嵌入模型配置 API 用于管理嵌入模型提供方（local/openai）及其配置。支持在本地 fastembed 模型和 OpenAI 兼容格式的远程 API 之间自由切换。
+
+| 方法 | 端点 | 功能 |
+|------|------|------|
+| GET | `/api/embedding_config/provider` | 获取当前嵌入模型提供方 |
+| POST | `/api/embedding_config/provider` | 设置嵌入模型提供方 |
+| GET | `/api/embedding_config/local` | 获取本地嵌入模型配置 |
+| POST | `/api/embedding_config/local` | 保存本地嵌入模型配置 |
+| GET | `/api/embedding_config/openai` | 获取 OpenAI 嵌入模型配置 |
+| POST | `/api/embedding_config/openai` | 保存 OpenAI 嵌入模型配置 |
+| GET | `/api/embedding_config/summary` | 获取嵌入模型配置摘要（一次性获取所有信息） |
+
+**切换提供方请求体**:
+```json
+{
+    "provider": "openai"
+}
+```
+
+**OpenAI 嵌入配置请求体**:
+```json
+{
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": ["sk-xxx"],
+    "embedding_model": "BAAI/bge-m3"
+}
+```
+
+> **前端建议**：使用 `GET /api/embedding_config/summary` 一次性获取所有嵌入模型配置信息，根据 `provider` 字段决定显示哪一组配置表单。
+
+### 8.1 Persona API 端点
 
 **文件位置**: [`gsuid_core/webconsole/persona_api.py`](gsuid_core/webconsole/persona_api.py)
 
@@ -2705,7 +2863,7 @@ class AIMemCategory(SQLModel, table=True):
 
 **文件位置**: [`gsuid_core/ai_core/memory/vector/`](gsuid_core/ai_core/memory/vector/)
 
-复用现有 `rag/base.py` 的 Qdrant 客户端和 Embedding 模型，创建 3 个独立 Collection。
+复用现有 `rag/base.py` 的 Qdrant 客户端和嵌入模型提供方（`embedding_provider`），创建 3 个独立 Collection。
 
 **Collection 定义**：
 
@@ -2926,9 +3084,83 @@ async def init_memory_system():
 
 ---
 
-## 11. 完整流程图
+## 11. 嵌入模型提供方抽象层
 
-### 11.1 消息处理总流程
+### 11.1 概述
+
+**文件位置**: [`gsuid_core/ai_core/rag/embedding.py`](gsuid_core/ai_core/rag/embedding.py)
+
+嵌入模型提供方抽象层将嵌入模型的调用统一为 `EmbeddingProvider` 接口，支持在本地 fastembed 模型和 OpenAI 兼容格式的远程 API 之间自由切换。通过 `ai_config` 中的 `embedding_provider` 配置项控制底层实现。
+
+### 11.2 架构设计
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    调用方（无需感知底层实现）                │
+│  rag/tools.py · rag/knowledge.py · rag/image_rag.py     │
+│  system_prompt/vector_store.py · memory/vector/ops.py   │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────┐
+│              EmbeddingProvider (ABC)                      │
+│  embed_sync(texts) → list[list[float]]                   │
+│  embed_single_sync(text) → list[float]                   │
+│  embed(texts) → list[list[float]]  (async)               │
+│  embed_single(text) → list[float]  (async)               │
+│  dimension → int                                         │
+└───────────┬─────────────────────────┬───────────────────┘
+            │                         │
+            ▼                         ▼
+┌───────────────────────┐ ┌───────────────────────────────┐
+│ LocalEmbeddingProvider│ │  OpenAIEmbeddingProvider       │
+│ (fastembed + ONNX)    │ │  (httpx → /v1/embeddings)     │
+│                       │ │                                │
+│ model_name: str       │ │ base_url: str                  │
+│ cache_dir: str        │ │ api_key: str                   │
+│                       │ │ model_name: str                │
+│ 同步: 线程池包装       │ │ 同步: httpx.Client             │
+│ 异步: run_in_executor │ │ 异步: httpx.AsyncClient        │
+└───────────────────────┘ └───────────────────────────────┘
+```
+
+### 11.3 配置项
+
+**嵌入模型提供方选择**（`ai_config`）：
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `embedding_provider` | str | `"local"` | 嵌入模型提供方，`"local"` 或 `"openai"` |
+
+**本地嵌入配置**（`local_embedding_config`）：
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `embedding_model_name` | str | `"BAAI/bge-small-zh-v1.5"` | 本地嵌入模型名称 |
+
+**OpenAI 嵌入配置**（`openai_embedding_config`）：
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `base_url` | str | `"https://api.openai.com/v1"` | API 基础 URL |
+| `api_key` | list[str] | `["sk-"]` | API 密钥列表 |
+| `embedding_model` | str | `"text-embedding-3-small"` | 嵌入模型名称 |
+
+### 11.4 向后兼容
+
+`rag/base.py` 中的 `embedding_model` 全局变量通过 `_EmbeddingModelWrapper` 包装 `EmbeddingProvider`，保持与原有 `fastembed.TextEmbedding` 相同的 `.embed([text])` 接口。现有调用方（`rag/tools.py`、`rag/knowledge.py`、`rag/image_rag.py`、`system_prompt/vector_store.py`）无需任何修改。
+
+新增 `embedding_provider` 全局变量暴露底层 `EmbeddingProvider` 实例，供 `memory/vector/ops.py` 等需要直接使用异步接口的模块使用。
+
+### 11.5 WebConsole API
+
+详见 [27. 嵌入模型配置 API](../gsuid_core/webconsole/docs/27-embedding-config.md)。
+
+---
+
+## 12. 完整流程图
+
+### 12.1 消息处理总流程
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -2983,7 +3215,7 @@ async def init_memory_system():
                                 └─────────────────────────────────────┘
 ```
 
-### 11.2 AI 聊天处理流程 (handle_ai_chat)
+### 12.2 AI 聊天处理流程 (handle_ai_chat)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -3063,7 +3295,7 @@ async def init_memory_system():
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 11.3 Heartbeat 定时巡检流程
+### 12.3 Heartbeat 定时巡检流程
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -3145,7 +3377,7 @@ async def init_memory_system():
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 11.4 配置更新与热重载流程
+### 12.4 配置更新与热重载流程
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -3183,7 +3415,7 @@ async def init_memory_system():
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-### 11.5 消息触发 vs 定时巡检 对比
+### 12.5 消息触发 vs 定时巡检 对比
 
 | 特性 | 提及应答模式 | 定时巡检模式 |
 |------|-------------|-------------|

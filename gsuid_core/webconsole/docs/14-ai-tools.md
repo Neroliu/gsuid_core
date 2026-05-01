@@ -10,6 +10,7 @@
 | `buildin` | 内置工具（如 search_knowledge、send_message） | 主 Agent 默认加载 |
 | `default` | 默认分类工具 | 按需通过向量检索加载 |
 | `common` | 通用工具 | 按需通过向量检索加载 |
+| `mcp` | MCP 外部工具（用户自定义的 MCP 服务器工具） | 启动时自动注册，按需加载 |
 
 ## 14.1 获取 AI 工具列表
 

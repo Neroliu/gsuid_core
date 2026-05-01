@@ -11,12 +11,16 @@ from typing import Final, Union
 from pathlib import Path
 
 import httpx
-from fastembed import TextEmbedding, SparseTextEmbedding
+from fastembed import SparseTextEmbedding
 from qdrant_client import AsyncQdrantClient
 from huggingface_hub import constants as hf_constants, snapshot_download
 
 from gsuid_core.logger import logger
 from gsuid_core.data_store import AI_CORE_PATH
+from gsuid_core.ai_core.rag.embedding import (
+    EmbeddingProvider,
+    get_embedding_provider,
+)
 from gsuid_core.ai_core.configs.ai_config import ai_config, rerank_model_config, local_embedding_config
 
 # ============== 向量库配置 ==============
@@ -286,7 +290,32 @@ async def pre_download_models():
             hf_constants.ENDPOINT = old_hf_constant
 
 
-embedding_model: "Union[TextEmbedding, None]" = None
+class _EmbeddingModelWrapper:
+    """向后兼容的嵌入模型包装器
+
+    将 EmbeddingProvider 包装为 fastembed TextEmbedding 的接口风格，
+    使得现有调用方（embedding_model.embed([text])）无需修改即可工作。
+    """
+
+    def __init__(self, provider: EmbeddingProvider):
+        self._provider = provider
+
+    def embed(self, texts: list[str]):
+        """兼容 fastembed TextEmbedding.embed() 接口
+
+        返回一个生成器，每个元素是 list[float]（而非 numpy array）。
+        """
+        results = self._provider.embed_sync(texts)
+        return iter(results)
+
+    @property
+    def provider(self) -> EmbeddingProvider:
+        """获取底层 EmbeddingProvider 实例"""
+        return self._provider
+
+
+embedding_model: "Union[_EmbeddingModelWrapper, None]" = None
+embedding_provider: "Union[EmbeddingProvider, None]" = None
 client: "Union[AsyncQdrantClient, None]" = None
 # 全局 Sparse Embedding 模型（懒加载，线程安全）
 _sparse_model = None
@@ -318,7 +347,7 @@ def _get_sparse_model():
 
 def init_embedding_model():
     """初始化Embedding模型和Qdrant客户端"""
-    global embedding_model, client
+    global embedding_model, embedding_provider, client
 
     if not is_enable_ai():
         return
@@ -327,12 +356,10 @@ def init_embedding_model():
     if client is not None:
         return
 
-    embedding_model = TextEmbedding(
-        model_name=EMBEDDING_MODEL_NAME,
-        cache_dir=str(MODELS_CACHE),
-        threads=2,
-        local_files_only=True,
-    )
+    # 通过统一的嵌入提供方抽象层初始化
+    provider = get_embedding_provider()
+    embedding_provider = provider
+    embedding_model = _EmbeddingModelWrapper(provider)
     client = AsyncQdrantClient(path=str(DB_PATH))
 
 

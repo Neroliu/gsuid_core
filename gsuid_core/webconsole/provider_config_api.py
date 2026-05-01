@@ -3,6 +3,12 @@ Provider Config APIs
 
 提供 Provider 配置的 RESTful APIs
 统一管理 OpenAI 和 Anthropic 格式的配置，支持高级/低级任务配置切换
+
+配置名称格式: "provider++config_name" (例如 "openai++MiniMAX")
+- provider: "openai" 或 "anthropic"
+- config_name: 配置文件名称
+- 分隔符: "++"
+- 兼容旧格式: 不含 "++" 的名称默认按 "openai" provider 处理
 """
 
 from typing import Any, Dict
@@ -11,6 +17,10 @@ from fastapi import Depends
 
 from gsuid_core.webconsole.app_app import app
 from gsuid_core.webconsole.web_api import require_auth
+from gsuid_core.ai_core.configs.models import (
+    parse_provider_config_name,
+    format_provider_config_name,
+)
 from gsuid_core.ai_core.configs.ai_config import ai_config
 from gsuid_core.ai_core.configs.openai_config import (
     get_openai_config,
@@ -44,6 +54,101 @@ def _get_manager_and_config(provider: str) -> tuple[Any, Any]:
         return anthropic_manager, get_anthropic_config
 
 
+def _validate_config_name_no_plus(config_name: str) -> Dict | None:
+    """
+    验证配置名称不包含 "+" 号。
+
+    Args:
+        config_name: 要验证的配置名称
+
+    Returns:
+        None 表示验证通过，否则返回错误响应字典
+    """
+    if "+" in config_name:
+        return {
+            "status": 1,
+            "msg": (
+                f"配置文件名称 '{config_name}' 包含非法字符 '+'。"
+                f"配置文件名称不允许包含 '+' 字符，"
+                f"因为 '+' 是 provider 与配置名称的分隔符（格式: provider++config_name）。"
+                f"请使用不含 '+' 的名称重新创建。"
+            ),
+            "data": None,
+        }
+    return None
+
+
+def _build_all_configs_summary() -> Dict[str, Any]:
+    """
+    构建所有配置的摘要信息，返回 provider++name 格式的名称。
+
+    Returns:
+        包含所有配置摘要的字典
+    """
+    openai_configs = list_available_openai_configs()
+    anthropic_configs = list_available_anthropic_configs()
+
+    all_summaries: list[Dict[str, Any]] = []
+
+    for name in openai_configs:
+        full_name = format_provider_config_name("openai", name)
+        try:
+            config = get_openai_config(name)
+            model_name = config.get_config("model_name").data
+            base_url = config.get_config("base_url").data
+            all_summaries.append(
+                {
+                    "name": full_name,
+                    "provider": "openai",
+                    "config_name": name,
+                    "model_name": model_name,
+                    "base_url": base_url,
+                }
+            )
+        except Exception:
+            all_summaries.append(
+                {
+                    "name": full_name,
+                    "provider": "openai",
+                    "config_name": name,
+                    "model_name": "未知",
+                    "base_url": "未知",
+                }
+            )
+
+    for name in anthropic_configs:
+        full_name = format_provider_config_name("anthropic", name)
+        try:
+            config = get_anthropic_config(name)
+            model_name = config.get_config("model_name").data
+            base_url = config.get_config("base_url").data
+            all_summaries.append(
+                {
+                    "name": full_name,
+                    "provider": "anthropic",
+                    "config_name": name,
+                    "model_name": model_name,
+                    "base_url": base_url,
+                }
+            )
+        except Exception:
+            all_summaries.append(
+                {
+                    "name": full_name,
+                    "provider": "anthropic",
+                    "config_name": name,
+                    "model_name": "未知",
+                    "base_url": "未知",
+                }
+            )
+
+    return {
+        "configs": all_summaries,
+        "high_level_config": ai_config.get_config("high_level_provider_config_name").data,
+        "low_level_config": ai_config.get_config("low_level_provider_config_name").data,
+    }
+
+
 # ==================== Provider 管理 ====================
 
 
@@ -59,6 +164,10 @@ async def get_provider_list(_: Dict = Depends(require_auth)) -> Dict:
     openai_configs = list_available_openai_configs()
     anthropic_configs = list_available_anthropic_configs()
 
+    # 返回 provider++name 格式的配置名称列表
+    openai_full_names = [format_provider_config_name("openai", name) for name in openai_configs]
+    anthropic_full_names = [format_provider_config_name("anthropic", name) for name in anthropic_configs]
+
     return {
         "status": 0,
         "msg": "ok",
@@ -69,14 +178,14 @@ async def get_provider_list(_: Dict = Depends(require_auth)) -> Dict:
                     "name": "OpenAI 兼容格式",
                     "description": "支持 OpenAI、Azure、第三方兼容 API",
                     "config_count": len(openai_configs),
-                    "configs": openai_configs,
+                    "configs": openai_full_names,
                 },
                 {
                     "id": "anthropic",
                     "name": "Anthropic 格式",
                     "description": "支持 Claude 系列模型",
                     "config_count": len(anthropic_configs),
-                    "configs": anthropic_configs,
+                    "configs": anthropic_full_names,
                 },
             ],
         },
@@ -110,48 +219,35 @@ async def get_task_config(
 
     try:
         config_key = f"{task_level}_level_provider_config_name"
-        config_name = ai_config.get_config(config_key).data
+        full_config_name = ai_config.get_config(config_key).data
 
-        # 获取可用的配置列表
-        available_openai = list_available_openai_configs()
-        available_anthropic = list_available_anthropic_configs()
-
-        # 根据 config_name 判断 provider 类型
-        if config_name in available_openai:
-            provider = "openai"
-        elif config_name in available_anthropic:
-            provider = "anthropic"
-        else:
-            provider = None
+        # 解析 provider++name 格式
+        provider, config_name = parse_provider_config_name(full_config_name)
 
         # 获取配置的详细信息
         config_detail = None
-        if provider:
-            manager, config_func = _get_manager_and_config(provider)
-            if manager.exists(config_name):
-                config = config_func(config_name)
-                config_dict = {}
-                for key in manager._config_template.keys():
-                    cfg = config.get_config(key)
-                    config_dict[key] = _string_config_to_dict(cfg)
-                config_detail = {
-                    "name": config_name,
-                    "provider": provider,
-                    "config": config_dict,
-                }
+        manager, config_func = _get_manager_and_config(provider)
+        if manager.exists(config_name):
+            config = config_func(config_name)
+            config_dict = {}
+            for key in manager._config_template.keys():
+                cfg = config.get_config(key)
+                config_dict[key] = _string_config_to_dict(cfg)
+            config_detail = {
+                "name": full_config_name,
+                "provider": provider,
+                "config_name": config_name,
+                "config": config_dict,
+            }
 
         return {
             "status": 0,
             "msg": "ok",
             "data": {
                 "task_level": task_level,
-                "current_config": config_name,
+                "current_config": full_config_name,
                 "current_provider": provider,
                 "config_detail": config_detail,
-                "available_configs": {
-                    "openai": available_openai,
-                    "anthropic": available_anthropic,
-                },
             },
         }
     except Exception as e:
@@ -173,7 +269,9 @@ async def set_task_config(
 
     Args:
         task_level: "high" 或 "low"
-        data: {"config_name": "...", "provider": "..."}
+        data: {"config_name": "provider++config_name"}
+              例如 {"config_name": "openai++MiniMAX"}
+              兼容旧格式: {"config_name": "MiniMAX"} 默认按 openai 处理
 
     Returns:
         status: 0成功，1失败
@@ -194,24 +292,30 @@ async def set_task_config(
             "data": None,
         }
 
-    # 验证 config_name 是否存在
-    available_openai = list_available_openai_configs()
-    available_anthropic = list_available_anthropic_configs()
-
-    if config_name not in available_openai and config_name not in available_anthropic:
+    # 解析 provider++name 格式（兼容旧格式）
+    try:
+        provider, actual_config_name = parse_provider_config_name(config_name)
+    except ValueError as e:
         return {
             "status": 1,
-            "msg": f"配置文件 '{config_name}' 不存在",
+            "msg": str(e),
             "data": None,
         }
 
-    # 根据 config_name 判断 provider
-    provider = "openai" if config_name in available_openai else "anthropic"
+    # 验证配置文件是否存在
+    manager, _ = _get_manager_and_config(provider)
+    if not manager.exists(actual_config_name):
+        return {
+            "status": 1,
+            "msg": f"配置文件 '{actual_config_name}' 在 {provider} provider 中不存在",
+            "data": None,
+        }
 
     try:
-        # 设置配置名称
+        # 存储 provider++name 格式的完整名称
+        full_name = format_provider_config_name(provider, actual_config_name)
         config_key = f"{task_level}_level_provider_config_name"
-        success = ai_config.set_config(config_key, config_name)
+        success = ai_config.set_config(config_key, full_name)
 
         if success:
             return {
@@ -219,7 +323,7 @@ async def set_task_config(
                 "msg": "ok",
                 "data": {
                     "task_level": task_level,
-                    "config_name": config_name,
+                    "config_name": full_name,
                     "provider": provider,
                 },
             }
@@ -227,6 +331,55 @@ async def set_task_config(
             return {
                 "status": 1,
                 "msg": "配置设置失败",
+                "data": None,
+            }
+    except Exception as e:
+        return {
+            "status": 1,
+            "msg": str(e),
+            "data": None,
+        }
+
+
+@app.delete("/api/provider_config/task_config/{task_level}")
+async def clear_task_config(
+    task_level: str,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    清除高级或低级任务的配置（将配置名置空）
+
+    Args:
+        task_level: "high" 或 "low"
+
+    Returns:
+        status: 0成功，1失败
+        data: 操作结果
+    """
+    if task_level not in ["high", "low"]:
+        return {
+            "status": 1,
+            "msg": "task_level 必须是 'high' 或 'low'",
+            "data": None,
+        }
+
+    try:
+        config_key = f"{task_level}_level_provider_config_name"
+        success = ai_config.set_config(config_key, "")
+
+        if success:
+            return {
+                "status": 0,
+                "msg": "ok",
+                "data": {
+                    "task_level": task_level,
+                    "config_name": "",
+                },
+            }
+        else:
+            return {
+                "status": 1,
+                "msg": "清除任务配置失败",
                 "data": None,
             }
     except Exception as e:
@@ -246,72 +399,18 @@ async def get_all_configs(_: Dict = Depends(require_auth)) -> Dict:
     获取所有配置（不区分 provider）
 
     用于前端一次性获取所有配置文件的摘要信息
+    所有配置名称均使用 "provider++config_name" 格式
 
     Returns:
         status: 0成功
         data: 所有配置列表
     """
-    openai_configs = list_available_openai_configs()
-    anthropic_configs = list_available_anthropic_configs()
-
-    # 获取每个配置的摘要信息
-    openai_summaries = []
-    for name in openai_configs:
-        try:
-            config = get_openai_config(name)
-            model_name = config.get_config("model_name").data
-            base_url = config.get_config("base_url").data
-            openai_summaries.append(
-                {
-                    "name": name,
-                    "provider": "openai",
-                    "model_name": model_name,
-                    "base_url": base_url,
-                }
-            )
-        except Exception:
-            openai_summaries.append(
-                {
-                    "name": name,
-                    "provider": "openai",
-                    "model_name": "未知",
-                    "base_url": "未知",
-                }
-            )
-
-    anthropic_summaries = []
-    for name in anthropic_configs:
-        try:
-            config = get_anthropic_config(name)
-            model_name = config.get_config("model_name").data
-            base_url = config.get_config("base_url").data
-            anthropic_summaries.append(
-                {
-                    "name": name,
-                    "provider": "anthropic",
-                    "model_name": model_name,
-                    "base_url": base_url,
-                }
-            )
-        except Exception:
-            anthropic_summaries.append(
-                {
-                    "name": name,
-                    "provider": "anthropic",
-                    "model_name": "未知",
-                    "base_url": "未知",
-                }
-            )
+    result = _build_all_configs_summary()
 
     return {
         "status": 0,
         "msg": "ok",
-        "data": {
-            "openai_configs": openai_summaries,
-            "anthropic_configs": anthropic_summaries,
-            "high_level_config": ai_config.get_config("high_level_provider_config_name").data,
-            "low_level_config": ai_config.get_config("low_level_provider_config_name").data,
-        },
+        "data": result,
     }
 
 
@@ -369,7 +468,7 @@ async def get_config_detail(
 
     Args:
         provider: provider 类型 (openai/anthropic)
-        config_name: 配置文件名
+        config_name: 配置文件名（不含 provider 前缀）
 
     Returns:
         status: 0成功，1失败
@@ -398,12 +497,15 @@ async def get_config_detail(
             cfg = config.get_config(key)
             config_dict[key] = _string_config_to_dict(cfg)
 
+        full_name = format_provider_config_name(provider, config_name)
+
         return {
             "status": 0,
             "msg": "ok",
             "data": {
-                "name": config_name,
+                "name": full_name,
                 "provider": provider,
+                "config_name": config_name,
                 "config": config_dict,
             },
         }
@@ -427,7 +529,7 @@ async def create_or_update_config(
 
     Args:
         provider: provider 类型 (openai/anthropic)
-        config_name: 配置文件名
+        config_name: 配置文件名（不含 provider 前缀，不允许包含 '+' 字符）
         data: 配置数据 {"config": {...}}
 
     Returns:
@@ -439,6 +541,11 @@ async def create_or_update_config(
             "msg": f"不支持的 provider 类型: {provider}",
             "data": None,
         }
+
+    # 拒绝配置名称包含 + 号的请求
+    plus_error = _validate_config_name_no_plus(config_name)
+    if plus_error is not None:
+        return plus_error
 
     config_data = data.get("config", {})
 
@@ -466,12 +573,15 @@ async def create_or_update_config(
                     "data": None,
                 }
 
+        full_name = format_provider_config_name(provider, config_name)
+
         return {
             "status": 0,
             "msg": "ok",
             "data": {
-                "name": config_name,
+                "name": full_name,
                 "provider": provider,
+                "config_name": config_name,
             },
         }
     except Exception as e:
@@ -493,7 +603,7 @@ async def create_default_config(
 
     Args:
         provider: provider 类型 (openai/anthropic)
-        config_name: 配置文件名
+        config_name: 配置文件名（不允许包含 '+' 字符）
 
     Returns:
         status: 0成功，1失败
@@ -505,16 +615,22 @@ async def create_default_config(
             "data": None,
         }
 
+    # 拒绝配置名称包含 + 号的请求
+    plus_error = _validate_config_name_no_plus(config_name)
+    if plus_error is not None:
+        return plus_error
+
     if provider == "openai":
         success = create_default_openai_config(config_name)
     else:
         success = create_default_anthropic_config(config_name)
 
     if success:
+        full_name = format_provider_config_name(provider, config_name)
         return {
             "status": 0,
             "msg": "ok",
-            "data": {"name": config_name, "provider": provider},
+            "data": {"name": full_name, "provider": provider, "config_name": config_name},
         }
     else:
         return {
@@ -535,7 +651,7 @@ async def delete_config(
 
     Args:
         provider: provider 类型 (openai/anthropic)
-        config_name: 配置文件名
+        config_name: 配置文件名（不含 provider 前缀）
 
     Returns:
         status: 0成功，1失败
@@ -549,14 +665,16 @@ async def delete_config(
 
     manager, _ = _get_manager_and_config(provider)
 
-    # 检查是否是当前激活的配置
+    # 检查是否是当前激活的配置（使用 provider++name 格式比较）
     high_level = ai_config.get_config("high_level_provider_config_name").data
     low_level = ai_config.get_config("low_level_provider_config_name").data
 
-    if high_level == config_name or low_level == config_name:
+    full_name = format_provider_config_name(provider, config_name)
+
+    if high_level == full_name or low_level == full_name:
         return {
             "status": 1,
-            "msg": f"无法删除当前激活的配置文件 '{config_name}'，请先切换到其他配置",
+            "msg": f"无法删除当前激活的配置文件 '{full_name}'，请先切换到其他配置",
             "data": None,
         }
 

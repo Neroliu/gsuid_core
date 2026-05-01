@@ -46,35 +46,68 @@ async def send_core_update_msg(bot: Bot, ev: Event):
     await bot.send(log_list)
 
 
-@sv_core_config.on_command(("设置代理"), block=True)
-async def send_core_set_proxy(bot: Bot, ev: Event):
-    logger.info("开始执行[设置代理]")
-    proxy_url = ev.text.strip() if ev.text else ""
-    core_plugins_config.set_config("ProxyURL", proxy_url)
+@sv_core_config.on_command(("设置镜像"), block=True)
+async def send_core_set_mirror(bot: Bot, ev: Event):
+    logger.info("开始执行[设置镜像]")
+    mirror_input = ev.text.strip() if ev.text else ""
+
+    # 支持快捷名称
+    mirror_map = {
+        "gitcode": "https://gitcode.com/gscore-mirror/",
+        "cnb": "https://cnb.cool/gscore-mirror/",
+        "ghproxy": "https://ghproxy.mihomo.me/",
+        "ssh": "ssh://",
+        "github": "",
+        "无": "",
+        "空": "",
+    }
+
+    mirror_prefix = mirror_map.get(mirror_input.lower(), mirror_input)
+
+    if mirror_prefix and not mirror_prefix.startswith(("http", "https", "ssh://")):
+        await bot.send(
+            "你可能输入了一个错误的镜像地址..."
+            "\n支持的快捷名称: gitcode, cnb, ghproxy, ssh, github"
+            "\n或直接输入完整的镜像前缀URL"
+        )
+        return
+
+    core_plugins_config.set_config("GitMirror", mirror_prefix)
+    display = mirror_prefix if mirror_prefix else "GitHub (默认)"
     await bot.send(
-        f"设置成功!\n当前插件安装代理为{core_plugins_config.get_config('ProxyURL').data}"
-        "\n之后【新安装】的插件均会应用此代理(当前你的插件【不会改变安装代理地址】！！)"
-        "\n你也可以输入命令[应用设置代理]以应用代理到现有全部插件。"
-        "\n注意: 代理地址必须以http或https开头。"
-        "\n注意: 你也可以输入[设置代理空]来清除当前代理。"
+        f"设置成功!\n当前镜像源为: {display}"
+        "\n之后【新安装】的插件均会使用此镜像源。"
+        "\n你也可以输入命令[应用镜像]以应用镜像到现有全部插件。"
     )
 
 
-@sv_core_config.on_command(("应用设置代理"), block=True)
-async def send_core_update_proxy(bot: Bot, ev: Event):
-    logger.info("开始执行[应用设置代理]")
-    proxy = ev.text if ev.text else None
-    if "无" in ev.text:
-        proxy = None
+@sv_core_config.on_command(("应用镜像"), block=True)
+async def send_core_apply_mirror(bot: Bot, ev: Event):
+    logger.info("开始执行[应用镜像]")
+    mirror_input = ev.text.strip() if ev.text else ""
 
-    if proxy and not proxy.startswith(("http", "https")):
-        return (
-            "你可能输入了一个错误的git代理地址..."
-            "\n注意: 代理地址必须以http或https开头。"
-            "\n注意: 你也可以输入[应用设置代理空]来清除当前代理。"
+    # 支持快捷名称
+    mirror_map = {
+        "gitcode": "https://gitcode.com/gscore-mirror/",
+        "cnb": "https://cnb.cool/gscore-mirror/",
+        "ghproxy": "https://ghproxy.mihomo.me/",
+        "ssh": "ssh://",
+        "github": "",
+        "无": "",
+        "空": "",
+    }
+
+    mirror_prefix = mirror_map.get(mirror_input.lower(), mirror_input)
+
+    if mirror_prefix and not mirror_prefix.startswith(("http", "https", "ssh://")):
+        await bot.send(
+            "你可能输入了一个错误的镜像地址..."
+            "\n支持的快捷名称: gitcode, cnb, ghproxy, ssh, github"
+            "\n或直接输入完整的镜像前缀URL"
         )
+        return
 
-    log_list = await set_proxy_all_plugins(proxy)
+    log_list = await set_proxy_all_plugins(mirror_prefix)
     await bot.send(log_list)
 
 

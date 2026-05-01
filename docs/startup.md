@@ -51,6 +51,13 @@ core.py::main()
        │                          │                        │                     │
        │                          │                        │                  加载完成
        │                          │                        │                     │
+       │  ┌─────────────────────────────────────────────────────────────────────┐│
+       │  │ 阶段一: core_start_before_execute() [阻塞式]                        ││
+       │  │   ├── 数据库迁移 move_database()                                    ││
+       │  │   ├── 数据库Schema迁移 trans_adapter()                              ││
+       │  │   └── 全局变量加载 load_global_val()                                ││
+       │  └─────────────────────────────────────────────────────────────────────┘│
+       │                          │                        │                     │
        │                    ┌─────┴─────┐                  │                     │
        │                    │ 启动 uvicorn │                │                     │
        │                    │ WebSocket   │                │                     │
@@ -60,8 +67,22 @@ core.py::main()
        │◄─────────────────────────│                        │                     │
        │     服务已启动            │                        │                     │
        │                          │                        │                     │
+       │  ┌─────────────────────────────────────────────────────────────────────┐│
+       │  │ 阶段二: core_start_execute() [后台异步]                              ││
+       │  │   ├── RAG初始化 (priority=0)                                        ││
+       │  │   ├── Persona初始化 (priority=0)                                    ││
+       │  │   ├── Memory系统初始化 (priority=5)                                 ││
+       │  │   ├── MCP工具注册 (priority=5)                                      ││
+       │  │   ├── AI统计初始化 (priority=10)                                    ││
+       │  │   └── 定时任务初始化                                                ││
+       │  └─────────────────────────────────────────────────────────────────────┘│
+       │                          │                        │                     │
        ▼                          ▼                        ▼                     ▼
 ```
+
+> **重要变更**: 启动钩子分为两个阶段：
+> 1. **`on_core_start_before`** — 在 WS 服务启动**之前**阻塞执行，用于数据库迁移、全局变量加载等必须在连接建立前完成的操作。
+> 2. **`on_core_start`** — 在 WS 服务启动**之后**作为后台任务异步执行，用于 RAG、Persona、Memory 等耗时初始化，不阻塞连接。
 
 ---
 
@@ -360,10 +381,12 @@ CONFIG_DEFAULT = {
     "log": {...},
     "enable_empty_start": True,
     "command_start": [],
-    "sv": {},      # SV 配置
-    "plugins": {},  # 插件配置
+    "sv": {},      # SV 配置（旧格式，启动时迁移）
 }
 ```
+
+> **Breaking Change**: `plugins` key 已从 `config.json` 中移除。
+> 每个插件的配置现在独立存储在 `data/plugins_configs/<plugin_name>.json` 中。
 
 ### 6.2 配置加载流程
 
@@ -392,7 +415,71 @@ CoreConfig.__init__()
          core_config.config = merged_config
 ```
 
-### 6.3 插件配置注册
+### 6.3 插件配置存储（PluginConfigStore）
+
+```python
+# gsuid_core/config.py::PluginConfigStore
+
+class PluginConfigStore:
+    """插件独立配置存储
+
+    每个插件的配置存储为 data/plugins_configs/<plugin_name>.json，
+    替代原先 config.json["plugins"] 的大字典模式。
+    """
+
+    def __init__(self):
+        self._dirty: Set[str] = set()
+        self._cache: Dict[str, dict] = {}
+        self._migrate_from_config()  # 启动时迁移旧配置
+        self._load_all()             # 加载所有插件配置到内存
+
+    def _migrate_from_config(self):
+        """启动时检查 config.json 中是否存在 plugins key，
+        如果存在则将每个插件拆分为独立 JSON 文件，然后移除该 key。"""
+
+    def get_all(self) -> Dict[str, dict]:
+        """返回所有插件配置的引用（与旧 config_plugins 兼容）。"""
+
+    def save(self, plugin_name: str) -> None:
+        """持久化单个插件配置到文件。"""
+
+    def save_all(self) -> None:
+        """持久化所有插件配置。"""
+```
+
+### 6.4 启动时迁移流程
+
+```
+PluginConfigStore.__init__()
+    │
+    ├──► _migrate_from_config()
+    │         │
+    │         ├── config.json 中存在 "plugins" key?
+    │         │         │
+    │         │         ▼
+    │         │    备份 config.json → data/config_backup.json（如不存在）
+    │         │         │
+    │         │         ▼
+    │         │    遍历每个插件配置
+    │         │         │
+    │         │         ▼
+    │         │    写入 data/plugins_configs/<name>.json
+    │         │         │
+    │         │         ▼
+    │         │    从 config.json 移除 "plugins" key
+    │         │
+    │         └── 不存在则跳过
+    │
+    └──► _load_all()
+              │
+              ▼
+         遍历 data/plugins_configs/*.json
+              │
+              ▼
+         加载到内存缓存 self._cache
+```
+
+### 6.5 插件配置注册
 
 ```python
 # gsuid_core/sv.py::Plugins
@@ -413,16 +500,18 @@ class Plugins:
             _plugins_config = deepcopy(plugins_sample)
             _plugins_config["name"] = name
             config_plugins[name] = _plugins_config
+            # 持久化到独立 JSON 文件
+            plugin_config_store.save(name)
 ```
 
-### 6.4 SV 配置注册
+### 6.6 SV 配置注册
 
 ```python
 # gsuid_core/sv.py::SV
 
 class SV:
     def __init__(self, name: str = "", ...):
-        # 从 config_plugins 获取插件配置
+        # 从 config_plugins（PluginConfigStore 缓存）获取插件配置
         plugin_config = config_plugins[self.self_plugin_name]
 
         # 设置 SV 级别的配置
@@ -438,30 +527,49 @@ class SV:
 ```python
 # gsuid_core/server.py
 
-core_start_def: Set[Callable] = set()
-core_shutdown_def: Set[Callable] = set()
+core_start_def: Set[_DefHook] = set()
+core_start_before_def: Set[_DefHook] = set()
+core_shutdown_def: Set[_DefHook] = set()
 
-def on_core_start(func: Callable):
-    """Core启动时执行的钩子"""
-    if func not in core_start_def:
-        core_start_def.add(func)
-    return func
+def on_core_start_before(func=None, /, priority: int = 0):
+    """注册在 WS 服务启动之前执行的钩子函数。
 
-def on_core_shutdown(func: Callable):
+    用于数据库迁移、全局变量加载等必须在连接建立前完成的操作。
+    与 on_core_start 不同，此钩子会阻塞 WS 服务启动，确保执行完毕后才开始接受连接。
+    """
+    ...
+
+def on_core_start(func=None, /, priority: int = 0):
+    """Core启动时执行的钩子（后台异步，不阻塞 WS 服务启动）"""
+    ...
+
+def on_core_shutdown(func=None, /, priority: int = 0):
     """Core关闭时执行的钩子"""
-    if func not in core_shutdown_def:
-        core_shutdown_def.add(func)
-    return func
+    ...
 ```
 
-### 7.2 已注册的启动钩子
+### 7.2 启动前钩子（`on_core_start_before`）
+
+> 在 WS 服务启动**之前**阻塞执行，必须全部完成后才开始接受连接。
+
+| 钩子函数 | 模块 | 优先级 | 功能 |
+|----------|------|--------|------|
+| `move_database` | `utils/database/startup.py` | 0 | 数据库文件迁移（旧版 → 新版路径） |
+| `trans_adapter` | `utils/database/startup.py` | 0 | 数据库 Schema 迁移（ALTER TABLE / CREATE INDEX） |
+| `load_global_val` | `buildin_plugins/core_command/core_status/command_global_val.py` | 0 | 加载全局变量和 Bot 最大 QPS 配置 |
+
+### 7.3 启动后钩子（`on_core_start`）
+
+> 在 WS 服务启动**之后**作为后台任务异步执行，不阻塞连接。
 
 | 钩子函数 | 模块 | 优先级 | 功能 |
 |----------|------|--------|------|
 | `init_all` | `ai_core/rag/startup.py` | 0 | 初始化RAG模块（Embedding模型 + Qdrant客户端） |
 | `init_default_personas` | `ai_core/persona/startup.py` | 0 | 初始化默认角色（早柚） |
 | `init_memory_system` | `ai_core/memory/startup.py` | 5 | 初始化记忆系统（Qdrant Collection + IngestionWorker独立线程） |
+| `_on_start` | `ai_core/mcp/startup.py` | 5 | 注册 MCP 工具 |
 | `init_ai_core_statistics` | `ai_core/statistics/startup.py` | 10 | 初始化AI统计系统（HistoryManager清理 + Heartbeat巡检） |
+| `init_scheduled_tasks` | `ai_core/scheduled_task/startup.py` | 0 | 重新加载待执行定时任务 |
 
 ### 7.3 RAG模块初始化详解
 
@@ -644,20 +752,40 @@ class _Bot:
 
 ## 九、启动检查清单
 
-| 步骤 | 操作 | 文件 |
-|------|------|------|
-| 1 | 数据库初始化 | `utils/database/base_models.py::init_database()` |
-| 2 | 插件加载 | `server.py::load_plugins()` |
-| 3 | 依赖安装 | `server.py::check_pyproject()` → `process_dependencies()` |
-| 4 | 模块导入 | `server.py::cached_import()` |
-| 5 | 配置合并 | `config.py::CoreConfig.update_config()` |
-| 6 | **Core Start钩子** | `server.py::core_start_def` |
-| 7 | **RAG初始化** (priority=0) | `ai_core/rag/startup.py::init_all()` |
-| 8 | **Persona初始化** (priority=0) | `ai_core/persona/startup.py::init_default_personas()` |
-| 9 | **Memory系统初始化** (priority=5) | `ai_core/memory/startup.py::init_memory_system()` — 启动 IngestionWorker 独立线程 |
-| 10 | **AI统计初始化** (priority=10) | `ai_core/statistics/startup.py::init_ai_core_statistics()` — HistoryManager清理 + Heartbeat巡检 |
-| 11 | WebSocket服务 | `core.py::websocket_endpoint()` |
-| 12 | HTTP服务 (可选) | `core.py::sendMsg()` |
+### 阶段一：同步阻塞（WS 服务启动前）
+
+| 步骤 | 操作 | 文件 | 执行方式 |
+|------|------|------|----------|
+| 1 | 数据库初始化 | `utils/database/base_models.py::init_database()` | 同步阻塞 |
+| 2 | **插件配置迁移** | `config.py::PluginConfigStore._migrate_from_config()` | 同步阻塞 |
+| 3 | **插件配置加载** | `config.py::PluginConfigStore._load_all()` | 同步阻塞 |
+| 4 | 插件加载 | `server.py::load_plugins()` | 同步阻塞 |
+| 5 | 依赖安装 | `server.py::check_pyproject()` → `process_dependencies()` | 同步阻塞 |
+| 6 | 模块导入 | `server.py::cached_import()` | 同步阻塞 |
+| 7 | **插件配置持久化** | `server.py::plugin_config_store.save_all()` | 同步阻塞 |
+| 8 | 配置合并 | `config.py::CoreConfig.update_config()` | 同步阻塞 |
+| 9 | **启动前钩子** | `app_life.py::await core_start_before_execute()` | **同步阻塞** |
+| 10 | 数据库文件迁移 | `utils/database/startup.py::move_database()` | 启动前钩子 |
+| 11 | 数据库Schema迁移 | `utils/database/startup.py::trans_adapter()` | 启动前钩子 |
+| 12 | 全局变量加载 | `buildin_plugins/core_command/core_status/command_global_val.py::load_global_val()` | 启动前钩子 |
+| 13 | WebSocket服务启动 | `core.py::uvicorn.Server.serve()` | 同步阻塞 |
+
+### 阶段二：后台异步（WS 服务启动后）
+
+| 步骤 | 操作 | 文件 | 执行方式 |
+|------|------|------|----------|
+| 14 | **Core Start钩子** (后台) | `app_life.py::asyncio.create_task(core_start_execute())` | **后台异步** |
+| 15 | **RAG初始化** (priority=0) | `ai_core/rag/startup.py::init_all()` | 后台异步 |
+| 16 | **Persona初始化** (priority=0) | `ai_core/persona/startup.py::init_default_personas()` | 后台异步 |
+| 17 | **Memory系统初始化** (priority=5) | `ai_core/memory/startup.py::init_memory_system()` | 后台异步 |
+| 18 | **MCP工具注册** (priority=5) | `ai_core/mcp/startup.py::_on_start()` | 后台异步 |
+| 19 | **AI统计初始化** (priority=10) | `ai_core/statistics/startup.py::init_ai_core_statistics()` | 后台异步 |
+| 20 | **定时任务初始化** | `ai_core/scheduled_task/startup.py::init_scheduled_tasks()` | 后台异步 |
+| 21 | HTTP服务 (可选) | `core.py::sendMsg()` | 同步阻塞 |
+
+> **重要变更**: 启动钩子分为两个阶段：
+> 1. **`on_core_start_before`** — 在 WS 服务启动**之前**阻塞执行，用于数据库迁移、全局变量加载等必须在连接建立前完成的操作。
+> 2. **`on_core_start`** — 在 WS 服务启动**之后**作为后台任务异步执行，用于 RAG、Persona、Memory 等耗时初始化，不阻塞连接。
 
 ---
 

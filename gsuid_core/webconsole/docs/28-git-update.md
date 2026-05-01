@@ -1,0 +1,491 @@
+# 28. Git 版本管理 API - /api/git-update
+
+## 概述
+
+Git 版本管理 API 提供对所有插件（含 core 本体）的 git commit 历史查看、版本回退和强制更新功能。用于前端实现版本管理页面，允许用户浏览历史更新记录并回退到任意版本。
+
+**核心能力**：
+- 获取所有插件的 git 状态信息（当前 commit、分支等）
+- 获取单个插件的远程 commit 列表（历史更新记录）
+- 获取单个插件的本地 commit 历史
+- 回退到指定 commit（`git reset --hard`）
+- 强制更新（`git reset --hard` + `git pull`）
+
+**技术特点**：
+- 所有 git 操作均通过 `asyncio.create_subprocess_shell` 异步执行，**不会阻塞事件循环**
+- 不依赖 gitpython 进行核心操作，避免阻塞问题
+
+**认证方式**：所有 API 均需通过 `Authorization: Bearer <token>` Header 携带访问令牌。
+
+---
+
+## 28.1 获取所有插件的 Git 状态
+
+获取所有插件（含 core 本体）的 git 状态信息，包括当前 commit、分支等。这是前端页面的**主数据接口**，页面加载时应首先调用此接口。
+
+```
+GET /api/git-update/status
+```
+
+**请求参数**：无
+
+**响应**：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": [
+        {
+            "name": "gsuid_core",
+            "path": "/path/to/gsuid_core",
+            "branch": "main",
+            "is_git_repo": true,
+            "current_commit": {
+                "hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+                "short_hash": "a1b2c3d",
+                "author": "Developer",
+                "date": "2024-01-15 10:30:00 +0800",
+                "message": "feat: 添加新功能"
+            }
+        },
+        {
+            "name": "GenshinUID",
+            "path": "/path/to/plugins/GenshinUID",
+            "branch": "main",
+            "is_git_repo": true,
+            "current_commit": {
+                "hash": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+                "short_hash": "b2c3d4e",
+                "author": "Developer",
+                "date": "2024-01-14 15:20:00 +0800",
+                "message": "fix: 修复已知问题"
+            }
+        }
+    ]
+}
+```
+
+**字段说明**：
+
+| 字段路径 | 类型 | 说明 |
+|----------|------|------|
+| `data[].name` | `string` | 插件名称。core 本体固定为 `"gsuid_core"` |
+| `data[].path` | `string` | 插件目录的绝对路径 |
+| `data[].branch` | `string` | 当前分支名称 |
+| `data[].is_git_repo` | `boolean` | 是否为有效 git 仓库 |
+| `data[].current_commit` | `object` | 当前 HEAD 的 commit 信息 |
+| `data[].current_commit.hash` | `string` | 完整 commit hash |
+| `data[].current_commit.short_hash` | `string` | 短 commit hash（前 7 位） |
+| `data[].current_commit.author` | `string` | 提交作者 |
+| `data[].current_commit.date` | `string` | 提交日期 |
+| `data[].current_commit.message` | `string` | 提交信息 |
+
+---
+
+## 28.2 获取单个插件的 Git 状态
+
+获取指定插件的 git 状态信息。
+
+```
+GET /api/git-update/status/{plugin_name}
+```
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plugin_name` | `string` | 插件名称。`"gsuid_core"` 表示 core 本体。大小写不敏感 |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "name": "gsuid_core",
+        "path": "/path/to/gsuid_core",
+        "branch": "main",
+        "is_git_repo": true,
+        "current_commit": {
+            "hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            "short_hash": "a1b2c3d",
+            "author": "Developer",
+            "date": "2024-01-15 10:30:00 +0800",
+            "message": "feat: 添加新功能"
+        }
+    }
+}
+```
+
+**错误响应**（插件不存在）：
+```json
+{
+    "status": 1,
+    "msg": "插件 NonExistent 不存在",
+    "data": null
+}
+```
+
+**错误响应**（非 git 仓库）：
+```json
+{
+    "status": 1,
+    "msg": "插件 SomePlugin 不是有效的 git 仓库",
+    "data": null
+}
+```
+
+---
+
+## 28.3 获取远程 Commit 列表
+
+获取插件的远程 commit 列表（历史更新记录）。会先执行 `git fetch` 获取最新远程信息，然后返回 `origin/{branch}` 的 commit 历史。
+
+```
+GET /api/git-update/commits/{plugin_name}
+```
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plugin_name` | `string` | 插件名称。`"gsuid_core"` 表示 core 本体。大小写不敏感 |
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `max_count` | `int` | ❌ | `50` | 最大返回的 commit 数量 |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "plugin_name": "gsuid_core",
+        "branch": "main",
+        "current_hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+        "commits": [
+            {
+                "hash": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
+                "short_hash": "f6a1b2c",
+                "author": "Developer",
+                "date": "2024-01-16 09:00:00 +0800",
+                "message": "feat: 最新功能"
+            },
+            {
+                "hash": "e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6",
+                "short_hash": "e5f6a1b",
+                "author": "Developer",
+                "date": "2024-01-15 10:30:00 +0800",
+                "message": "feat: 添加新功能"
+            },
+            {
+                "hash": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5",
+                "short_hash": "d4e5f6a",
+                "author": "Developer",
+                "date": "2024-01-14 15:20:00 +0800",
+                "message": "fix: 修复已知问题"
+            }
+        ]
+    }
+}
+```
+
+**字段说明**：
+
+| 字段路径 | 类型 | 说明 |
+|----------|------|------|
+| `data.plugin_name` | `string` | 插件名称 |
+| `data.branch` | `string` | 当前分支名称 |
+| `data.current_hash` | `string` | 当前本地 HEAD 的 commit hash，用于前端标记"当前版本" |
+| `data.commits` | `array` | 远程 commit 列表，按时间倒序排列 |
+| `data.commits[].hash` | `string` | 完整 commit hash |
+| `data.commits[].short_hash` | `string` | 短 commit hash（前 7 位） |
+| `data.commits[].author` | `string` | 提交作者 |
+| `data.commits[].date` | `string` | 提交日期 |
+| `data.commits[].message` | `string` | 提交信息 |
+
+**前端使用建议**：
+- 通过比较 `current_hash` 与每个 commit 的 `hash`，可以标记当前所在的版本
+- 可以用 `short_hash` 在 UI 中简洁展示
+- `message` 字段用于展示更新日志
+
+---
+
+## 28.4 获取本地 Commit 历史
+
+获取插件的本地 commit 历史（`git log`）。
+
+```
+GET /api/git-update/local-commits/{plugin_name}
+```
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plugin_name` | `string` | 插件名称。`"gsuid_core"` 表示 core 本体。大小写不敏感 |
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `max_count` | `int` | ❌ | `50` | 最大返回的 commit 数量 |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "plugin_name": "gsuid_core",
+        "branch": "main",
+        "commits": [
+            {
+                "hash": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+                "short_hash": "a1b2c3d",
+                "author": "Developer",
+                "date": "2024-01-15 10:30:00 +0800",
+                "message": "feat: 添加新功能"
+            }
+        ]
+    }
+}
+```
+
+**字段说明**：与 28.3 相同，但 `data.commits` 是本地 commit 历史。
+
+---
+
+## 28.5 回退到指定 Commit
+
+将插件回退到指定的 commit 版本。执行 `git reset --hard {commit_hash}`。
+
+> ⚠️ **注意**：此操作会丢弃当前版本之后的所有本地修改。如需回到最新版本，请使用"强制更新"接口。
+
+```
+POST /api/git-update/checkout/{plugin_name}
+```
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plugin_name` | `string` | 插件名称。`"gsuid_core"` 表示 core 本体。大小写不敏感 |
+
+**请求体**：
+```json
+{
+    "commit_hash": "a1b2c3d"
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `commit_hash` | `string` | ✅ | 目标 commit hash，支持短 hash（至少 4 位） |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "已切换到 commit: a1b2c3d",
+    "data": {
+        "success": true,
+        "message": "已切换到 commit: a1b2c3d"
+    }
+}
+```
+
+**错误响应**（无效 hash）：
+```json
+{
+    "status": 1,
+    "msg": "无效的 commit hash: xyz",
+    "data": {
+        "success": false,
+        "message": "无效的 commit hash: xyz"
+    }
+}
+```
+
+**错误响应**（插件不存在）：
+```json
+{
+    "status": 1,
+    "msg": "插件 NonExistent 不存在",
+    "data": null
+}
+```
+
+---
+
+## 28.6 强制更新
+
+强制更新插件到最新版本。执行 `git reset --hard origin/{branch}` 然后 `git pull`。
+
+适用于本地有冲突或修改时的强制更新场景，会**丢弃所有本地修改**。
+
+```
+POST /api/git-update/force-update/{plugin_name}
+```
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plugin_name` | `string` | 插件名称。`"gsuid_core"` 表示 core 本体。大小写不敏感 |
+
+**请求参数**：无
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "强制更新成功，当前版本: f6a1b2c",
+    "data": {
+        "success": true,
+        "message": "强制更新成功，当前版本: f6a1b2c",
+        "current_commit": {
+            "hash": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
+            "short_hash": "f6a1b2c",
+            "author": "Developer",
+            "date": "2024-01-16 09:00:00 +0800",
+            "message": "feat: 最新功能"
+        }
+    }
+}
+```
+
+**错误响应**：
+```json
+{
+    "status": 1,
+    "msg": "git reset --hard 失败: ...",
+    "data": {
+        "success": false,
+        "message": "git reset --hard 失败: ...",
+        "current_commit": null
+    }
+}
+```
+
+---
+
+## 前端集成指南
+
+### 页面布局建议
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Git 版本管理                                                      │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  插件选择: [ gsuid_core ▼ ]                                       │
+│                                                                  │
+│  当前状态: 分支 main | commit a1b2c3d | 2024-01-15 10:30          │
+│                                                                  │
+│  ┌─ 远程 Commit 列表（历史更新记录）──────────────────────────────┐ │
+│  │  ● f6a1b2c  2024-01-16  feat: 最新功能           [回退到此版本] │ │
+│  │  ● e5f6a1b  2024-01-15  feat: 添加新功能  ← 当前  [回退到此版本] │ │
+│  │  ● d4e5f6a  2024-01-14  fix: 修复已知问题         [回退到此版本] │ │
+│  │  ● c3d4e5f  2024-01-13  refactor: 重构代码        [回退到此版本] │ │
+│  │  ...                                                           │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  [ 🔄 强制更新到最新版本 ]                                         │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 推荐交互流程
+
+#### 1. 页面加载
+
+```
+页面加载
+  │
+  ├─→ GET /api/git-update/status
+  │     │
+  │     └─→ 渲染插件选择器（下拉框）
+  │           - 展示所有 is_git_repo=true 的插件
+  │           - 默认选中 gsuid_core
+  │
+  ├─→ 用户选择插件（或默认选中）
+  │     │
+  │     └─→ GET /api/git-update/commits/{plugin_name}
+  │           │
+  │           ├─→ 渲染当前状态信息（分支、当前 commit）
+  │           │
+  │           └─→ 渲染 commit 列表
+  │                 - 标记 current_hash 对应的行为"当前版本"
+  │                 - 每行显示 short_hash、date、message
+  │                 - 每行提供"回退到此版本"按钮
+  │
+  └─→ 页面就绪
+```
+
+#### 2. 回退到指定版本
+
+```
+用户点击某行的"回退到此版本"按钮
+  │
+  ├─→ 弹出确认对话框
+  │     "确认将 xxx 回退到 commit a1b2c3d (feat: xxx)？"
+  │     "注意：回退后当前版本之后的本地修改将被丢弃"
+  │
+  ├─→ 用户确认
+  │     │
+  │     └─→ POST /api/git-update/checkout/{plugin_name}
+  │           {commit_hash: "a1b2c3d"}
+  │           │
+  │           ├─→ 成功
+  │           │     - 显示成功提示
+  │           │     - 刷新 commit 列表
+  │           │       GET /api/git-update/commits/{plugin_name}
+  │           │
+  │           └─→ 失败
+  │                 - 显示错误提示
+  │
+  └─→ 用户取消 → 无操作
+```
+
+#### 3. 强制更新
+
+```
+用户点击"强制更新到最新版本"按钮
+  │
+  ├─→ 弹出确认对话框
+  │     "确认强制更新 xxx？"
+  │     "此操作将丢弃所有本地修改，不可恢复！"
+  │
+  ├─→ 用户确认
+  │     │
+  │     └─→ POST /api/git-update/force-update/{plugin_name}
+  │           │
+  │           ├─→ 成功
+  │           │     - 显示成功提示，包含最新 commit 信息
+  │           │     - 刷新 commit 列表
+  │           │       GET /api/git-update/commits/{plugin_name}
+  │           │
+  │           └─→ 失败
+  │                 - 显示错误提示
+  │
+  └─→ 用户取消 → 无操作
+```
+
+### 错误处理建议
+
+| 场景 | 建议处理方式 |
+|------|-------------|
+| 网络请求失败 | 显示 toast 错误提示，保留当前页面状态 |
+| 插件不是 git 仓库 | 在插件选择器中禁用该选项，或显示"非 git 仓库"提示 |
+| 插件不存在 | 显示 toast 错误提示 "插件 xxx 不存在" |
+| 无效的 commit hash | 显示 toast 错误提示，提示用户检查 hash 值 |
+| git fetch 失败 | 显示错误提示，建议检查网络连接或镜像源配置 |
+| 回退后需要恢复 | 提示用户使用"强制更新"回到最新版本 |
+
+### 与 Git 镜像源管理的关系
+
+如果远程仓库访问速度慢，建议先通过 [Git 镜像源管理 API](./25-git-mirror.md) 切换到国内镜像源，再进行版本管理操作，以获得更好的体验。

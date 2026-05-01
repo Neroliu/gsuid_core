@@ -3,7 +3,7 @@ from shutil import move
 from sqlalchemy.sql import text
 
 from gsuid_core.logger import logger
-from gsuid_core.server import on_core_start
+from gsuid_core.server import on_core_start_before
 from gsuid_core.data_store import get_res_path
 from gsuid_core.global_val import global_val_path
 
@@ -31,7 +31,7 @@ exec_list = [
 ]
 
 
-@on_core_start
+@on_core_start_before
 async def move_database():
     old_path = get_res_path().parent / "GsData.db"
     if old_path.exists() and not DB_PATH.exists():
@@ -44,7 +44,7 @@ async def move_database():
         logger.warning("删除历史统计记录...")
 
 
-@on_core_start
+@on_core_start_before
 async def trans_adapter():
     async with async_maker() as session:
         for _t in exec_list:

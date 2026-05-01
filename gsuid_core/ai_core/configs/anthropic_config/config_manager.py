@@ -23,7 +23,18 @@ ANTHROPIC_CONFIG_TEMPLATE: Dict[str, GSC] = {
         desc="指定Anthropic API的基础URL",
         data="https://api.anthropic.com",
         options=[
+            # 官方默认地址
             "https://api.anthropic.com",
+            # 原配置中的第三方兼容/代理地址
+            "https://api.minimaxi.com/anthropic",
+            "https://api.deepseek.com/anthropic",
+            "https://api.bltcy.ai",  # 常见的高级中转
+            # 国际知名的 API 聚合器 (支持 Anthropic SDK 原生调用)
+            "https://openrouter.ai/api",
+            "https://api.aimlapi.com",
+            # 开发者本地常用的 OneAPI / NewAPI 中转系统默认地址
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
         ],
     ),
     "api_key": GsListStrConfig(
@@ -37,10 +48,23 @@ ANTHROPIC_CONFIG_TEMPLATE: Dict[str, GSC] = {
         desc="指定Anthropic API的模型, 该模型将会用于处理大部分任务",
         data="claude-sonnet-4-20250514",
         options=[
+            # 2026 年最新 4.7 / 4.6 家族 (性能/成本最优组合)
+            "claude-opus-4-7",  # 4月最新，最强推理与长上下文复杂代码
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",  # 综合性价比与速度首选
+            "claude-haiku-4-5",  # 极速轻量模型
+            # 最新滚动标签 (官方推荐的面向未来的调用方式)
+            "claude-opus-latest",
+            "claude-sonnet-latest",
+            "claude-haiku-latest",
+            # 2025 年中期主推版本 (原配置保留)
             "claude-sonnet-4-20250514",
             "claude-opus-4-20250514",
+            "claude-haiku-4-20250514",
+            # 2024 年经典遗留版本 (向下兼容)
             "claude-3-5-sonnet-20241022",
             "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
         ],
     ),
     "max_tokens": GsStrConfig(

@@ -30,7 +30,7 @@ async def get_core_config(request: Request, _user: Dict = Depends(require_auth))
     config = core_config.config
     result = {}
     for key in CONFIG_DEFAULT:
-        if key in ["sv", "plugins"]:
+        if key in ["sv"]:
             continue
         value = config.get(key)
         if value is not None:

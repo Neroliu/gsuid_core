@@ -20,12 +20,30 @@ from gsuid_core.utils.plugins_config.gs_config import ConfigSetManager
 OPENAI_CONFIG_TEMPLATE: Dict[str, GSC] = {
     "base_url": GsStrConfig(
         title="OpenAI API基础URL",
-        desc="指定OpenAI API的基础URL, 注意是以 /v1 结尾",
+        desc="指定OpenAI API的基础URL, 注意一般是以 /v1 结尾",
         data="https://api.openai.com/v1",
         options=[
+            # 默认及原版配置
             "https://api.openai.com/v1",
             "https://api.bltcy.ai/v1",
             "https://api.minimaxi.com/v1",
+            # 2026 国内主流大模型厂商官方接口
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",  # 阿里通义千问 (DashScope)
+            "https://api.deepseek.com",  # DeepSeek 深度求索
+            "https://open.bigmodel.cn/api/paas/v4",  # 智谱AI (GLM)
+            "https://api.moonshot.cn/v1",  # 月之暗面 (Kimi)
+            "https://api.lingyiwanwu.com/v1",  # 零一万物 (Yi)
+            "https://ark.cn-beijing.volces.com/api/v3",  # 字节跳动火山引擎 (豆包)
+            # 国内外知名API聚合/中转平台
+            "https://api.siliconflow.cn/v1",  # 硅基流动 (SiliconFlow)
+            "https://openrouter.ai/api/v1",  # OpenRouter
+            "https://api.aimlapi.com/v1",  # AI/ML API
+            # 国外其他主流大模型厂商
+            "https://api.x.ai/v1",  # xAI (Grok)
+            "https://api.anthropic.com/v1",  # Anthropic (Claude)
+            # 开发者本地常用的 OneAPI / NewAPI 中转系统默认地址
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
         ],
     ),
     "api_key": GsListStrConfig(
@@ -39,21 +57,52 @@ OPENAI_CONFIG_TEMPLATE: Dict[str, GSC] = {
         desc="指定OpenAI API的模型, 该模型将会用于处理大部分任务",
         data="gpt-4o-mini",
         options=[
-            "gpt-4o-mini",
+            # OpenAI (2026 最新主推)
+            "gpt-5.5",
+            "gpt-5",
+            "o4",
+            "o4-mini",
+            "o3",
             "gpt-4o",
+            "gpt-4o-mini",  # 兼容保留
+            # xAI (Grok 4 最前沿家族)
+            "grok-4.3",
+            "grok-4.20",
+            "grok-4.20-multi-agent",
+            "grok-4.1-fast",
+            "grok-4",
+            # Anthropic (Claude 4.7 / 4.6 家族)
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            # 阿里通义千问 (Qwen 3.6 最新矩阵)
+            "qwen3.6-plus-preview",
+            "qwen3.6-35b-a3b",
+            "qwen3.6-flash",
+            "qwen3.5-plus",
+            "qwen-turbo",
+            # DeepSeek
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
+            "deepseek-reasoner",
+            "deepseek-chat",
+            # 智谱 AI (GLM-5 家族)
+            "glm-5.1",
+            "glm-5-turbo",
+            "glm-4-flash",
+            # 月之暗面 Kimi
+            "kimi-k2.6",
+            "moonshot-v1-auto",
+            # Google (Gemini)
+            "gemini-3.1-pro",
+            "gemini-3.1-flash",
             "gemini-2.5-flash",
-            "gemini-3.1-flash-lite-preview",
+            # 零一万物 (Yi)
+            "yi-lightning",
+            # MiniMax
             "MiniMax-M2.7",
-        ],
-    ),
-    "embedding_model": GsStrConfig(
-        title="嵌入模型(暂不支持远程嵌入)",
-        desc="指定OpenAI API的嵌入模型, 该模型将会用于处理文本嵌入",
-        data="text-embedding-3-small",
-        options=[
-            "text-embedding-3-small",
-            "text-embedding-3-large",
-            "text-embedding-2",
+            "MiniMax-M2.7-highspeed",
         ],
     ),
     "model_support": GsListStrConfig(

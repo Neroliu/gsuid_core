@@ -8,7 +8,7 @@ from pathlib import Path
 from functools import wraps
 
 from gsuid_core.bot import Bot
-from gsuid_core.config import core_config, plugins_sample
+from gsuid_core.config import core_config, plugins_sample, plugin_config_store
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.trigger import Trigger
@@ -27,7 +27,7 @@ class SVList:
 
 SL = SVList()
 config_sv = core_config.get_config("sv")
-config_plugins = core_config.get_config("plugins")
+config_plugins = plugin_config_store.get_all()
 
 
 def modify_func(func):
@@ -131,9 +131,9 @@ class Plugins:
             setattr(self, var, kwargs[var])
             plugin_config[var] = kwargs[var]
         if is_lazy:
-            core_config.lazy_set_config("plugins", config_plugins)
+            plugin_config_store.mark_dirty(self.name)
         else:
-            core_config.set_config("plugins", config_plugins)
+            plugin_config_store.save(self.name)
 
 
 class SV:
@@ -200,7 +200,7 @@ class SV:
                     config_plugins[plugins_name] = _plugins_config
                     plugins = Plugins(**_plugins_config)
 
-                core_config.lazy_set_config("plugins", config_plugins)
+                plugin_config_store.mark_dirty(plugins_name)
             else:
                 if "prefix" not in config_plugins[plugins_name]:
                     if plugins_name in SL.plugins:
@@ -230,7 +230,7 @@ class SV:
                     **config_plugins[plugins_name],
                 )
 
-                core_config.lazy_set_config("plugins", config_plugins)
+                plugin_config_store.mark_dirty(plugins_name)
 
             # SV指向唯一Plugins实例
             self.plugins = plugins
@@ -298,9 +298,9 @@ class SV:
             setattr(self, var, kwargs[var])
             plugin_sv_config[self.name][var] = kwargs[var]
         if is_lazy:
-            core_config.lazy_set_config("plugins", config_plugins)
+            plugin_config_store.mark_dirty(self.self_plugin_name)
         else:
-            core_config.set_config("plugins", config_plugins)
+            plugin_config_store.save(self.self_plugin_name)
 
     def enable(self):
         self.set(enabled=True)

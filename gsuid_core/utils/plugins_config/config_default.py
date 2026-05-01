@@ -69,9 +69,16 @@ CONIFG_DEFAULT: Dict[str, GSC] = {
         "Core内插件更新/安装时自动载入/重载",
         True,
     ),
-    "ProxyURL": GsStrConfig(
-        "安装插件时使用git代理地址",
-        "git代理地址",
+    "GitMirror": GsStrConfig(
+        "Git镜像源",
+        "选择git镜像源，用于加速插件安装和更新。支持镜像源(gitcode/cnb)、代理前缀(ghproxy)和SSH三种模式",
         "",
+        [
+            "",
+            "https://gitcode.com/gscore-mirror/",
+            "https://cnb.cool/gscore-mirror/",
+            "https://ghproxy.mihomo.me/",
+            "ssh://",
+        ],
     ),
 }

@@ -11,37 +11,6 @@ from gsuid_core.utils.plugins_config.models import (
 )
 from gsuid_core.utils.plugins_config.gs_config import StringConfig
 
-from .openai_config import list_available_openai_configs
-from .anthropic_config import list_available_anthropic_configs
-
-
-def _get_openai_config_options() -> list[str]:
-    """动态获取可用的 OpenAI 配置文件列表"""
-
-    configs = list_available_openai_configs()
-    if not configs:
-        return ["openai_config"]
-    return configs
-
-
-def _get_anthropic_config_options() -> list[str]:
-    """动态获取可用的 Anthropic 配置文件列表"""
-
-    configs = list_available_anthropic_configs()
-    if not configs:
-        return ["anthropic_config"]
-    return configs
-
-
-def _get_provider_config_options(provider: str) -> list[str]:
-    """动态获取可用的 Provider 配置文件列表（不含扩展名）"""
-    if provider == "openai":
-        return _get_openai_config_options()
-    elif provider == "anthropic":
-        return _get_anthropic_config_options()
-    return ["openai_config"]
-
-
 AI_CONFIG: Dict[str, GSC] = {
     "enable": GsBoolConfig(
         "是否启用AI服务",
@@ -69,19 +38,19 @@ AI_CONFIG: Dict[str, GSC] = {
     ),
     "high_level_provider_config_name": GsStrConfig(
         title="高级任务AI模型配置名称",
-        desc="指定用于高级任务(复杂推理/工具调用)的AI配置文件名称",
+        desc="指定用于高级任务(工具调用)的AI配置文件名称，格式为 'provider++config_name'（如 'openai++MiniMAX'）",
         data="",
     ),
     "low_level_provider_config_name": GsStrConfig(
         title="低级任务AI模型配置名称",
-        desc="指定用于低级任务(简单问答/快速响应)的AI配置文件名称",
+        desc="指定用于低级任务(简单问答)的AI配置文件名称，格式为 'provider++config_name'（如 'openai++MiniMAX'）",
         data="",
     ),
     "embedding_provider": GsStrConfig(
         "嵌入模型服务提供方",
         "指定嵌入模型提供方",
         "local",
-        options=["local"],
+        options=["local", "openai"],
     ),
     "websearch_provider": GsStrConfig(
         "网络搜索服务提供方",
@@ -197,6 +166,41 @@ LOCAL_EMBEDDING_CONFIG: Dict[str, GSC] = {
     ),
 }
 
+OPENAI_EMBEDDING_CONFIG: Dict[str, GSC] = {
+    "base_url": GsStrConfig(
+        title="嵌入模型API基础URL",
+        desc="指定OpenAI兼容格式的嵌入模型API基础URL, 注意一般是以 /v1 结尾",
+        data="https://api.openai.com/v1",
+        options=[
+            "https://api.openai.com/v1",
+            "https://api.siliconflow.cn/v1",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://api.deepseek.com",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
+    ),
+    "api_key": GsListStrConfig(
+        title="嵌入模型API密钥",
+        desc="指定OpenAI兼容格式的嵌入模型API密钥, 支持添加多个",
+        data=["sk-"],
+        options=["sk-"],
+    ),
+    "embedding_model": GsStrConfig(
+        title="嵌入模型名称",
+        desc="指定嵌入模型名称, 该模型将会用于处理文本嵌入",
+        data="text-embedding-3-small",
+        options=[
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+            "text-embedding-ada-002",
+            "BAAI/bge-m3",
+            "BAAI/bge-large-zh-v1.5",
+            "Pro/BAAI/bge-m3",
+        ],
+    ),
+}
+
 RERANK_MODEL_CONFIG: Dict[str, GSC] = {
     "rerank_model_name": GsStrConfig(
         "指定Rerank模型名称",
@@ -283,4 +287,10 @@ minimax_config = StringConfig(
     "GsCore AI MiniMax搜索配置",
     get_res_path("ai_core") / "minimax_config.json",
     MINIMAX_CONFIG,
+)
+
+openai_embedding_config = StringConfig(
+    "GsCore AI OpenAI嵌入模型配置",
+    get_res_path("ai_core") / "openai_embedding_config.json",
+    OPENAI_EMBEDDING_CONFIG,
 )

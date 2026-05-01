@@ -97,6 +97,61 @@ async def get_persona_detail(persona_name: str, _: Dict = Depends(require_auth))
         }
 
 
+@app.put("/api/persona/{persona_name}/content")
+async def update_persona_content(
+    persona_name: str,
+    data: Dict,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    更新角色 Markdown 内容
+
+    将新的 Markdown 内容保存到角色的 persona.md 文件中。
+
+    Args:
+        persona_name: 角色名称
+        data: 包含 content (Markdown字符串) 的请求体
+
+    Returns:
+        status: 0成功，1失败
+        data: 包含 name 和 content 的对象
+    """
+    content = data.get("content", "")
+
+    if not content:
+        return {
+            "status": 1,
+            "msg": "请提供内容",
+            "data": None,
+        }
+
+    # 检查角色是否存在
+    persona = Persona(persona_name)
+    if not persona.exists():
+        return {
+            "status": 1,
+            "msg": f"角色 '{persona_name}' 不存在",
+            "data": None,
+        }
+
+    try:
+        await save_persona(persona_name, content)
+        return {
+            "status": 0,
+            "msg": "人格内容更新成功",
+            "data": {
+                "name": persona_name,
+                "content": content,
+            },
+        }
+    except Exception as e:
+        return {
+            "status": 1,
+            "msg": f"保存内容失败: {str(e)}",
+            "data": None,
+        }
+
+
 @app.get("/api/persona/{persona_name}/avatar")
 async def get_persona_avatar(persona_name: str, _: Dict = Depends(require_auth)) -> FileResponse:
     """

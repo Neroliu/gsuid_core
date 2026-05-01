@@ -104,6 +104,41 @@ Authorization: Bearer <token>
 
 ---
 
+## 24.3 清除任务级别配置
+
+```
+DELETE /api/provider_config/task_config/{task_level}
+```
+
+**请求头**：
+```
+Authorization: Bearer <token>
+```
+
+**路径参数**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| task_level | string | 任务级别（high/low） |
+
+**响应**：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "task_level": "high",
+        "config_name": ""
+    }
+}
+```
+
+**使用场景**：当前端需要删除正在激活的配置文件时，应先调用此接口清除对应的任务级别配置（将配置名置空），然后再执行删除操作。具体流程：
+
+1. **有其他可用配置**：先调用 `POST /api/provider_config/task_config/{task_level}` 切换到另一个配置，再删除原配置
+2. **没有其他可用配置**：先调用 `DELETE /api/provider_config/task_config/{task_level}` 清除任务配置，再删除配置文件
+
+---
+
 ## 24.4 设置任务级别配置
 
 ```
@@ -330,14 +365,10 @@ Authorization: Bearer <token>
 }
 ```
 
-**错误响应**（配置正在使用中）：
-```json
-{
-    "status": 1,
-    "msg": "无法删除当前激活的配置文件 'xxx'，请先切换到其他配置",
-    "data": null
-}
-```
+> **前端删除激活配置的推荐流程**：
+> 1. 检查该配置是否为当前激活的高级/低级任务配置
+> 2. **有其他可用配置**：先调用 `POST /api/provider_config/task_config/{task_level}` 切换到另一个配置，再删除原配置
+> 3. **没有其他可用配置**：先调用 `DELETE /api/provider_config/task_config/{task_level}` 清除任务配置（置空），再删除配置文件
 
 ---
 

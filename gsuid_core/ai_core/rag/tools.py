@@ -128,7 +128,7 @@ async def sync_tools(tools_map: Dict[str, ToolBase]) -> None:
     else:
         logger.info("🧠 [Tools] 本地工具为空，跳过清理步骤")
 
-    logger.info("🧠 [Tools] 工具同步完成\n")
+    logger.info("🧠 [Tools] 工具同步完成")
 
 
 def get_main_agent_tools() -> ToolList:

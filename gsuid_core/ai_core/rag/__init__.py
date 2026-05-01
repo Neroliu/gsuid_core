@@ -30,6 +30,7 @@ from gsuid_core.ai_core.rag.base import (
     # 全局变量
     embedding_model,
     is_enable_rerank,
+    embedding_provider,
     # 函数
     init_embedding_model,
 )
@@ -42,6 +43,11 @@ from gsuid_core.ai_core.rag.startup import init_all
 from gsuid_core.ai_core.rag.reranker import (
     get_reranker,
     rerank_results,
+)
+from gsuid_core.ai_core.rag.embedding import (
+    EmbeddingProvider,
+    get_embedding_provider,
+    reset_embedding_provider,
 )
 from gsuid_core.ai_core.rag.image_rag import (
     sync_images,
@@ -77,11 +83,16 @@ __all__ = [
     "is_enable_rerank",
     # base - 全局变量
     "embedding_model",
+    "embedding_provider",
     "client",
     # base - 函数
     "init_embedding_model",
     "get_point_id",
     "calculate_hash",
+    # embedding
+    "EmbeddingProvider",
+    "get_embedding_provider",
+    "reset_embedding_provider",
     # tools
     "init_tools_collection",
     "sync_tools",

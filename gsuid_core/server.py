@@ -26,7 +26,7 @@ except ImportError:
 
 
 from gsuid_core.bot import _Bot
-from gsuid_core.config import core_config
+from gsuid_core.config import core_config, plugin_config_store
 from gsuid_core.logger import logger
 from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
 
@@ -78,9 +78,11 @@ class _DefHook:
 
 
 core_start_def: Set[_DefHook] = set()
+core_start_before_def: Set[_DefHook] = set()
 core_shutdown_def: Set[_DefHook] = set()
 installed_dependencies: Dict[str, str] = {}
 _module_cache: Dict[str, ModuleType] = {}
+_added_paths: Set[str] = set()
 
 
 def on_core_start(
@@ -90,6 +92,26 @@ def on_core_start(
 ):
     def decorator(f: Callable) -> Callable:
         core_start_def.add(_DefHook(priority=priority, func=f))
+        return f
+
+    if func is not None:
+        return decorator(func)
+    return decorator
+
+
+def on_core_start_before(
+    func: Optional[Callable] = None,
+    /,
+    priority: int = 0,
+):
+    """注册在 WS 服务启动之前执行的钩子函数。
+
+    用于数据库迁移、全局变量加载等必须在连接建立前完成的操作。
+    与 on_core_start 不同，此钩子会阻塞 WS 服务启动，确保执行完毕后才开始接受连接。
+    """
+
+    def decorator(f: Callable) -> Callable:
+        core_start_before_def.add(_DefHook(priority=priority, func=f))
         return f
 
     if func is not None:
@@ -119,6 +141,27 @@ def on_core_shutdown(
     if func is not None:
         return decorator(func)
     return decorator
+
+
+async def core_start_before_execute():
+    """执行 WS 服务启动前的钩子函数（阻塞式，必须全部完成后才启动 WS）"""
+    try:
+        sorted_defs = sorted(core_start_before_def)
+        logger.info(
+            "♻ [GsCore] 执行启动前Hook函数中！",
+            [hook.func.__name__ for hook in sorted_defs],
+        )
+        # 按优先级分组
+        for priority, group in groupby(sorted_defs, key=lambda h: h.priority):
+            # 同一优先级并发执行，全部完成后再进入下一优先级
+            await asyncio.gather(
+                *[
+                    hook.func() if asyncio.iscoroutinefunction(hook.func) else asyncio.to_thread(hook.func)
+                    for hook in group
+                ]
+            )
+    except Exception as e:
+        logger.exception(e)
 
 
 async def core_start_execute():
@@ -198,7 +241,8 @@ class GsServer:
             # fix: 使用 parent 而不是 parents (parents是迭代器)
             # 添加包的父级目录到path，以便可以 import package_name
             parent_path = str(init_path.parent.parent)
-            if parent_path not in sys.path:
+            if parent_path not in _added_paths:
+                _added_paths.add(parent_path)
                 sys.path.append(parent_path)
 
             module_list.append(
@@ -214,7 +258,8 @@ class GsServer:
                 plugin_path = sub_plugin / "__init__.py"
                 if plugin_path.exists():
                     parent_path = str(plugin_path.parent.parent)
-                    if parent_path not in sys.path:
+                    if parent_path not in _added_paths:
+                        _added_paths.add(parent_path)
                         sys.path.append(parent_path)
 
                     if nest:
@@ -360,6 +405,7 @@ class GsServer:
                 logger.exception(f"❌ 插件{filepath.stem}导入失败, 错误代码: {e}")
                 continue
 
+        plugin_config_store.save_all()
         core_config.lazy_write_config()
         logger.success("💖 [早柚核心] 插件加载完成!")
 
@@ -481,9 +527,6 @@ def check_pyproject(pyproject: Path):
 def process_dependencies(dependency_list: List[str], update: bool = False):
     """统一处理依赖列表"""
     to_install = []
-
-    # 每次处理前先刷新，确保获取最新状态
-    refresh_installed_dependencies()
 
     for dep_str in dependency_list:
         try:
