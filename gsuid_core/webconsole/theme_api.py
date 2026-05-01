@@ -65,14 +65,14 @@ async def get_theme_config(
         "status": 0,
         "msg": "ok",
         "data": {
-            "mode": "dark",
+            "mode": "light",
             "style": "glassmorphism",
-            "color": "red",
+            "color": "blue",
             "language": "zh-CN",
             "icon_color": "colored",
-            "background_image": "https://cdn.pixabay.com/photo/2024/05/26/15/27/anime-8788959_1280.jpg",
-            "blur_intensity": 12,
-            "theme_preset": "shadcn",
+            "background_image": None,
+            "blur_intensity": 6,
+            "theme_preset": "default",
         },
     }
 
