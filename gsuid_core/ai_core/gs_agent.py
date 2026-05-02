@@ -309,6 +309,8 @@ class GsCoreAIAgent:
                             if isinstance(part, ToolReturnPart):
                                 # 返回的可能是对象也可能是字符串，这里为了打印转成 str
                                 tool_result_str = str(part.content)
+                                if len(tool_result_str) > 200:
+                                    tool_result_str = tool_result_str[:200] + f"...[截断, 共{len(tool_result_str)}字符]"
                                 logger.debug(
                                     f"[✅ 工具执行完毕]: 工具名称='{part.tool_name}', 结果给到Agent={tool_result_str}"
                                 )

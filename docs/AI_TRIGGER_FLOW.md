@@ -68,6 +68,7 @@ gsuid_core/ai_core/
 ├── normalize.py         # 查询规范化 (已移至子模块)
 ├── register.py          # 工具注册
 ├── resource.py          # 资源管理 (含 MCP_CONFIGS_PATH)
+├── trigger_bridge.py    # 触发器→AI工具桥接 (MockBot/ai_return)
 ├── utils.py             # 工具函数
 ├── configs/             # 配置文件
 │   ├── __init__.py
@@ -875,17 +876,18 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 
 #### 5.5.3 工具分类与渐进式加载
 
-系统采用**渐进式加载**机制，工具按用途和重要性分为四个层级：
+系统采用**渐进式加载**机制，工具按用途和重要性分为五个层级：
 
 | 分类 | 说明 | 加载方式 | 示例 |
 |------|------|----------|------|
 | `self` | 仅为自身服务的能力 | 主Agent专属，始终加载 | 好感度管理、发送消息、创建子Agent |
 | `buildin` | 默认内置工具 | 主Agent始终加载 | 知识库检索、Web搜索、查询记忆 |
+| `by_trigger` | 触发器桥接工具 | 主Agent始终加载 | 插件触发器通过 `to_ai` 自动注册的 AI 工具 |
 | `common` | 通常工具 | 按需加载，用户明确需要时 | 定时任务管理、获取自身信息 |
 | `default` | 子Agent工具 | 由子Agent使用 | 文件操作、日期获取、系统命令 |
 | `mcp` | MCP 外部工具 | 启动时自动注册，按需加载 | 用户自定义的 MCP 服务器工具 |
 
-**加载优先级**: `self` > `buildin` > `common`
+**加载优先级**: `self` > `buildin` > `by_trigger` > `common`
 
 #### 5.5.4 渐进式加载架构图
 
@@ -905,6 +907,12 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 │  │ - 知识库检索                                       │   │
 │  │ - Web搜索                                          │   │
 │  │ - 查询用户记忆                                      │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ by_trigger 工具 (始终加载)                            │   │
+│  │ - 插件触发器通过 to_ai 自动注册的 AI 工具             │   │
+│  │ - send_trigger_images (发送拦截到的图片)              │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                           │
 │  ┌─────────────────────────────────────────────────────┐   │
@@ -932,7 +940,7 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 
 **主Agent (Main Agent)**
 - 使用 `get_main_agent_tools()` 获取基础工具集
-- 加载 `self` 和 `buildin` 分类的所有工具（始终加载）
+- 加载 `self`、`buildin` 和 `by_trigger` 分类的所有工具（始终加载）
 - 通过 `search_tools(non_category=["self", "buildin"])` 按需加载 `common` 分类工具
 - **不会调用 `default` 分类的工具**
 
@@ -983,7 +991,46 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 | `pause_scheduled_task` | 暂停任务 |
 | `resume_scheduled_task` | 恢复任务 |
 
-#### 5.5.9 子Agent工具 (`category="default"`)
+#### 5.5.9 触发器桥接工具 (`category="by_trigger"`)
+
+由插件触发器通过 `to_ai` 参数自动注册的 AI 工具，主Agent始终加载。
+
+**文件位置**: [`gsuid_core/ai_core/trigger_bridge.py`](gsuid_core/ai_core/trigger_bridge.py)
+
+| 工具 | 说明 |
+|------|------|
+| `send_trigger_images` | 将触发器工具调用中拦截到的图片发送给用户 |
+| `<触发器函数名>` | 插件通过 `@sv.on_command(..., to_ai="...")` 自动注册的工具 |
+
+**工作原理**：
+
+1. 插件开发者在 `@sv.on_command()` 等装饰器上声明 `to_ai` 参数（非空字符串作为 AI 工具的 docstring）
+2. 插件加载时，`_on()` 方法自动调用 `_register_trigger_as_ai_tool()` 将触发器函数包装为 AI 工具
+3. AI 调用时，包装函数使用 `MockBot` 代理 `bot.send()`：
+   - **图片/资源 (bytes, Message(type="image"))**: 暂存到上下文，不传给 AI 也不发送给用户
+   - **纯文本 (str, Message(type="text"))**: 被收集，作为工具返回值传回给 AI
+4. 触发器函数内可通过 `ai_return()` 向 AI 返回纯文本中间结果
+5. AI 拿到工具返回值（纯文本摘要 + "已生成 N 张图片"描述），决定是否调用 `send_trigger_images` 将图片真正发送给用户
+
+**交互流程**：
+
+```
+用户直接触发：
+  用户 → 触发器匹配 → handler(real_bot, ev) → bot.send(im) → 直接发图 ✅
+
+AI 调用（AI 决定发图）：
+  AI → 调用触发器工具(text="证券ETF")
+    → MockBot 拦截 send(im)，图片暂存到 extra
+    → 工具返回 "查询完成\n[已生成 1 张图片。请调用 send_trigger_images 工具将图片发送给用户]"
+  AI → 调用 send_trigger_images() → real_bot.send(im) → 图片发出 ✅
+
+AI 调用（AI 决定不发图）：
+  AI → 调用触发器工具(text="证券ETF")
+    → 工具返回含图片标记
+  AI → 判断用户只要数据 → 不调用 send_trigger_images → 图片丢弃 ✅
+```
+
+#### 5.5.10 子Agent工具 (`category="default"`)
 
 通过 `create_subagent` 调用，用于文件操作、代码执行等。
 
@@ -1004,7 +1051,7 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 > - 达到上限后强制终止并返回错误日志
 > - 防止 思考 -> 执行 -> 报错 -> 思考 的无限循环
 
-#### 5.5.10 动态工具发现
+#### 5.5.11 动态工具发现
 
 **文件位置**: [`gsuid_core/ai_core/buildin_tools/dynamic_tool_discovery.py`](gsuid_core/ai_core/buildin_tools/dynamic_tool_discovery.py)
 
@@ -1017,7 +1064,7 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 
 > **注意**：这两个工具函数已实现但 `@ai_tools` 装饰器被注释掉，暂未作为 AI 工具注册。主Agent 通过 `gs_agent.py` 中的 `search_tools()` 函数实现类似的动态工具发现能力。
 
-#### 5.5.11 MCP 工具集成 (Model Context Protocol)
+#### 5.5.12 MCP 工具集成 (Model Context Protocol)
 
 **文件位置**: [`gsuid_core/ai_core/mcp/`](gsuid_core/ai_core/mcp/)
 
@@ -1107,11 +1154,12 @@ AI 决策调用 MCP 工具
 
 ```python
 def get_main_agent_tools() -> ToolList:
-    """获取主Agent专用工具（self + buildin 分类）"""
+    """获取主Agent专用工具（self + buildin + by_trigger 分类）"""
     all_tools_cag = get_registered_tools()
     all_tools = {}
-    for cat in ["self", "buildin"]:
-        all_tools.update(all_tools_cag[cat])
+    for cat in ["self", "buildin", "by_trigger"]:
+        if cat in all_tools_cag:
+            all_tools.update(all_tools_cag[cat])
     return [all_tools[tool].tool for tool in all_tools]
 
 async def search_tools(

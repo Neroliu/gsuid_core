@@ -98,7 +98,45 @@ sv.append_trigger(
 )
 ```
 
-### 2.3 处理函数签名
+### 2.3 `to_ai` 参数 — 触发器自动注册为 AI 工具
+
+所有 `on_xxx` 装饰器支持 `to_ai: str = ""` 参数，将触发器自动注册为 AI 工具：
+
+```python
+from gsuid_core.sv import SV
+from gsuid_core.bot import Bot
+from gsuid_core.models import Event
+from gsuid_core.ai_core.trigger_bridge import ai_return
+
+sv = SV("股票插件")
+
+@sv.on_command(
+    "个股",
+    to_ai="""
+    查询指定股票或ETF的K线图或分时图。
+    当用户询问某只股票/ETF走势时调用。
+
+    Args:
+        text: 股票名称或代码，可加前缀 "日k"/"周k"/"月k"，多个以空格分隔
+              例如 "证券ETF"、"日k 白酒ETF"
+    """,
+)
+async def send_stock_img(bot: Bot, ev: Event):
+    content = ev.text.strip().lower()
+    if not content:
+        ai_return("错误：未提供股票代码")
+        return await bot.send("请后跟股票代码使用")
+    # ... 原有逻辑完全不变 ...
+    await bot.send(im)
+```
+
+**关键点**：
+- `to_ai` 默认为 `""`，不注册 AI 工具，行为完全不变
+- `ai_return()` 在普通用户触发时静默忽略，AI 调用时收集文本作为工具返回值
+- AI 调用时使用 `MockBot` 拦截 `bot.send()`，AI 可决定是否真正发送图片
+- 详见 [AI Core API 文档](./ai_core_api_for_plugins.md#4-触发器--ai-工具桥接to_ai)
+
+### 2.4 处理函数签名
 
 所有触发器处理函数必须遵循以下签名：
 
@@ -191,67 +229,81 @@ await bot.send(
 
 ### 4.1 配置模型类
 
-GsCore 提供了统一的配置模型类：
+GsCore 使用 `StringConfig` + `CONFIG_DEFAULT` 字典模式管理插件配置。
+
+**第一步：定义配置项**（`config_default.py`）
 
 ```python
-from gsuid_core.utils.plugins_config.gs_config import GsConfig
+from typing import Dict
 from gsuid_core.utils.plugins_config.models import (
-    GsStrConfig,    # 字符串配置
-    GsBoolConfig,   # 布尔配置
-    GsIntConfig,     # 整数配置
-    GsListConfig,    # 列表配置（整数）
-    GsListStrConfig, # 字符串列表配置
-    GsDictConfig,    # 字典配置
-    GsImageConfig,   # 图片配置
-    GsTimeConfig,    # 时间配置（已废弃）
-    GsTimeRConfig,   # 时间范围配置
+    GSC,
+    GsStrConfig,
+    GsBoolConfig,
+    GsIntConfig,
 )
 
-class MyPluginConfig(GsConfig):
-    @property
-    def config_name(self) -> str:
-        return "my_plugin"
-
-    def setup_config(self) -> dict[str, GsConfig]:
-        return {
-            "api_key": GsStrConfig(
-                title="API Key",
-                description="输入您的 API Key",
-                default=""
-            ),
-            "max_count": GsIntConfig(
-                title="最大数量",
-                description="最大处理数量",
-                default=10
-            ),
-            "enable_feature": GsBoolConfig(
-                title="启用功能",
-                description="是否启用该功能",
-                default=True
-            )
-        }
+CONFIG_DEFAULT: Dict[str, GSC] = {
+    "api_key": GsStrConfig(
+        title="API Key",
+        desc="输入您的 API Key",
+        data="",
+    ),
+    "max_count": GsIntConfig(
+        title="最大数量",
+        desc="最大处理数量",
+        data=10,
+    ),
+    "enable_feature": GsBoolConfig(
+        title="启用功能",
+        desc="是否启用该功能",
+        data=True,
+    ),
+}
 ```
+
+**第二步：创建 StringConfig 实例**（`my_config.py`）
+
+```python
+from gsuid_core.utils.plugins_config.gs_config import StringConfig
+from gsuid_core.data_store import get_res_path
+from .config_default import CONFIG_DEFAULT
+
+CONFIG_PATH = get_res_path() / "MyPlugin" / "config.json"
+my_config = StringConfig("MyPlugin", CONFIG_PATH, CONFIG_DEFAULT)
+```
+
+> **配置类型一览**（`gsuid_core/utils/plugins_config/models.py`）：
+>
+> | 类型 | 说明 | `data` 类型 |
+> |------|------|------------|
+> | `GsStrConfig` | 字符串配置 | `str` |
+> | `GsBoolConfig` | 布尔配置 | `bool` |
+> | `GsIntConfig` | 整数配置 | `int` |
+> | `GsListStrConfig` | 字符串列表 | `List[str]` |
+> | `GsListConfig` | 整数列表 | `List[int]` |
+> | `GsDictConfig` | 字典配置 | `Dict[str, List]` |
+> | `GsImageConfig` | 图片配置 | `str` |
+> | `GsTimeRConfig` | 时间范围 | `Tuple[int, int]` |
+>
+> 所有配置类型继承自 `GsConfig(msgspec.Struct)`，必须包含 `title`、`desc`、`data` 字段。
 
 ### 4.2 获取配置值
 
 ```python
-# 获取插件配置实例
-config = sv.config  # 或通过 Plugins 实例获取
-config = sv.plugins
+from my_plugin.my_config import my_config
 
-# 获取配置值（已实例化后，data 属性包含实际值）
-api_key = config.api_key.data
-max_count = config.max_count.data
+# 通过字典方式访问配置项，.data 获取实际值
+api_key = my_config["api_key"].data
+max_count = my_config["max_count"].data
+enable = my_config["enable_feature"].data
 ```
 
 ### 4.3 修改配置值
 
 ```python
-# 运行时修改配置（会自动持久化）
-config.api_key.data = "new_api_key"
-
-# 或使用 set 方法
-config.set(api_key="new_api_key")
+# 修改配置值（会自动持久化到 JSON 文件）
+my_config["api_key"].data = "new_api_key"
+my_config.write_config()
 ```
 
 ---

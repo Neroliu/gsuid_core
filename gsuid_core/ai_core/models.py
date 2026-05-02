@@ -1,5 +1,5 @@
-from typing import TYPE_CHECKING, Dict, List, Optional, TypedDict
-from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
+from dataclasses import field, dataclass
 
 from gsuid_core.bot import Bot
 from gsuid_core.models import Event
@@ -14,6 +14,7 @@ class ToolContext:
 
     bot: Optional[Bot] = None
     ev: Optional[Event] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
 
 
 class KnowledgeBase(TypedDict):

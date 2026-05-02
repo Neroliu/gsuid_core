@@ -1,0 +1,368 @@
+"""触发器 → AI 工具桥接模块
+
+提供以下能力：
+1. `ai_return()` — 在触发器函数内向 AI 返回纯文本中间结果
+2. `MockBot` — AI 调用时拦截 bot.send，将文本内容收集返回给 AI；图片暂存到 extra，由 AI 决定是否发送
+3. `_register_trigger_as_ai_tool()` — 将触发器函数包装为 AI 工具并注册到 _TOOL_REGISTRY
+4. `send_trigger_images` — 配套工具，由 AI 决定是否将拦截到的图片真正发送给用户
+"""
+
+import re
+import inspect
+import contextvars
+from copy import deepcopy
+from typing import Any, Dict, List, Tuple, Union, Optional
+
+from pydantic_ai import RunContext
+from pydantic_ai.tools import Tool
+
+from gsuid_core.bot import Bot
+from gsuid_core.logger import logger
+from gsuid_core.models import Message
+from gsuid_core.ai_core.models import ToolContext
+from gsuid_core.ai_core.register import _TOOL_REGISTRY, ToolBase, _get_plugin_name_from_module
+
+# ─── ContextVar ───────────────────────────────────────────────────────────────
+# AI 调用时为 dict（收集 send 内容），普通用户调用时为 None
+_AI_CALL_CONTEXT: contextvars.ContextVar[Optional[Dict[str, list]]] = contextvars.ContextVar(
+    "_AI_CALL_CONTEXT", default=None
+)
+
+
+# ─── ai_return ────────────────────────────────────────────────────────────────
+
+
+def ai_return(text: str) -> None:
+    """
+    在触发器函数内调用，向 AI 返回纯文本中间结果。
+
+    当触发器由真实用户触发时，此函数什么也不做（静默忽略）。
+    当触发器由 AI 工具调用时，文本会被收集，最终作为工具返回值返回给 AI。
+
+    用法示例::
+
+        from gsuid_core.ai_core.trigger_bridge import ai_return
+
+        @sv.on_command("个股", to_ai=\"\"\"
+        查询指定股票或ETF的分时图/K线图。
+        Args:
+            text: 股票代码或名称，多个以空格分隔，可选前缀 '日k'/'周k'/'月k'，
+                  例如 "证券ETF" 或 "日k 证券ETF 白酒ETF"
+        \"\"\")
+        async def send_stock_img(bot: Bot, ev: Event):
+            content = ev.text.strip()
+            if not content:
+                ai_return("请提供股票代码，例如：证券ETF")
+                return await bot.send("请后跟股票代码使用")
+            ...
+    """
+    ctx = _AI_CALL_CONTEXT.get()
+    if ctx is not None:
+        ctx["texts"].append(text)
+
+
+# ─── MockBot ──────────────────────────────────────────────────────────────────
+
+
+class MockBot:
+    """
+    AI 调用触发器时使用的代理 Bot。
+
+    - **文本/消息 (str)**: 拦截并存入上下文，最终作为工具返回值返回给 AI（不发送给用户）
+    - **图片/资源 (bytes, Message(type="image"))**: 暂存到上下文，不传给 AI 也不发送给用户；
+      AI 收到文本描述后决定是否调用 ``send_trigger_images`` 真正发送
+    - **其他属性**: 代理到真实 Bot，保证触发器内部对 ``bot.bot_self_id`` 等属性的访问正常
+
+    普通用户触发时不会使用此类，触发器直接拿到真实 Bot。
+    """
+
+    def __init__(self, real_bot: Bot, ctx: Dict[str, Any]) -> None:
+        # 使用 object.__setattr__ 避免触发 msgspec.Struct 的 __setattr__
+        object.__setattr__(self, "_real_bot", real_bot)
+        object.__setattr__(self, "_ctx", ctx)
+
+    async def send(
+        self,
+        message: Union[Message, List[Message], str, bytes, List[str]],
+        at_sender: bool = False,
+    ) -> None:
+        """拦截 send：文本存入上下文返回给 AI，图片暂存不发送。"""
+        ctx = object.__getattribute__(self, "_ctx")
+        if isinstance(message, bytes):
+            # bytes 通常是图片数据，暂存到 images 列表，不传给 AI
+            ctx["images"].append(message)
+        elif isinstance(message, str):
+            if _is_image_string(message):
+                # base64://... 或 data:image/... 字符串，当作图片处理
+                ctx["images"].append(message)
+            else:
+                ctx["bot_messages"].append(message)
+        else:
+            # Message / List[Message] — 检查是否包含图片段
+            if _message_contains_image(message):
+                ctx["images"].append(message)
+            else:
+                # 纯文字 Message，转为字符串存入返回值
+                ctx["bot_messages"].append(_message_to_text(message))
+
+    async def reply(
+        self,
+        message: Union[Message, List[Message], str, bytes, List[str]],
+        at_sender: bool = False,
+    ) -> None:
+        """拦截 reply，行为与 send 相同。"""
+        await self.send(message, at_sender)
+
+    def __getattr__(self, name: str) -> Any:
+        """代理所有其他属性到真实 Bot。"""
+        return getattr(object.__getattribute__(self, "_real_bot"), name)
+
+
+def _is_image_string(s: str) -> bool:
+    """检查字符串是否为图片数据（base64 编码或 data URI）。"""
+    stripped = s.strip()
+    return (
+        stripped.startswith("base64://")
+        or stripped.startswith("data:image/")
+        or stripped.startswith("http://")
+        or stripped.startswith("https://")
+    )
+
+
+def _message_contains_image(message: Any) -> bool:
+    """检查消息对象是否包含图片段（image segment）。"""
+    if isinstance(message, bytes):
+        return True
+    if isinstance(message, str):
+        return _is_image_string(message)
+    if isinstance(message, Message):
+        return message.type == "image"
+    if isinstance(message, (list, tuple)):
+        return any(_message_contains_image(m) for m in message)
+    return False
+
+
+def _message_to_text(message: Any) -> str:
+    """将纯文字 Message 对象转为字符串，避免将图片数据序列化。"""
+    if isinstance(message, str):
+        return message
+    if isinstance(message, Message):
+        if message.type == "text" and isinstance(message.data, str):
+            return message.data
+        # 非文字类型的 Message，只返回类型描述，不序列化 data
+        return f"[{message.type or 'unknown'}消息]"
+    if isinstance(message, (list, tuple)):
+        return " ".join(_message_to_text(m) for m in message)
+    return str(message)
+
+
+# ─── _register_trigger_as_ai_tool ─────────────────────────────────────────────
+
+
+def _register_trigger_as_ai_tool(
+    func: Any,
+    keyword: Union[str, Tuple[str, ...]],
+    to_ai_doc: str,
+    sv: Any,
+    trigger_type: str,
+) -> None:
+    """
+    将一个触发器函数包装为 AI 工具并注册到 _TOOL_REGISTRY["by_trigger"]。
+
+    生成工具签名::
+
+        async def <func_name>(ctx: RunContext[ToolContext], text: str) -> str
+
+    AI 调用时：
+    1. 按照 to_ai_doc 中的说明构建 text 参数
+    2. 包装函数使用 MockBot 拦截 bot.send，将图片/消息内容收集而非真正发送
+    3. 模拟 ev.text = text，以及触发器命中所需的 ev.command
+    4. 调用原始触发器函数
+    5. 收集 ai_return() 写入的中间文本 + bot.send 拦截的内容作为工具返回值
+
+    Args:
+        func: 原始触发器函数
+        keyword: 触发器关键字（字符串或元组）
+        to_ai_doc: AI 工具的 docstring
+        sv: SV 实例
+        trigger_type: 触发器类型（command/prefix/keyword/fullmatch/suffix/regex 等）
+    """
+    # 取第一个 keyword 作为命令（用于填充 ev.command）
+    primary_keyword = keyword[0] if isinstance(keyword, tuple) else keyword
+
+    # 工具函数名：使用原函数名
+    tool_func_name = func.__name__
+
+    async def _ai_tool_wrapper(ctx: RunContext[ToolContext], text: str) -> str:
+        real_bot = ctx.deps.bot
+        ev = ctx.deps.ev
+        assert real_bot is not None, "触发器 AI 工具调用时 bot 不能为 None"
+        assert ev is not None, "触发器 AI 工具调用时 ev 不能为 None"
+
+        # 模拟 ev：深拷贝 event 后修改 text 和 command
+        fake_ev = deepcopy(ev)
+        fake_ev.text = text
+        fake_ev.command = primary_keyword
+        # raw_text 也要对齐，保证 trigger 内部逻辑一致
+        fake_ev.raw_text = f"{primary_keyword} {text}".strip()
+
+        # 如果触发器类型是 regex，需要模拟 regex 匹配
+        if trigger_type == "regex":
+            match = re.search(primary_keyword, text)
+            if match:
+                fake_ev.regex_dict = match.groupdict()
+                fake_ev.regex_group = match.groups()
+                fake_ev.command = "|".join(g if g is not None else "" for g in match.groups())
+            else:
+                fake_ev.regex_dict = {}
+                fake_ev.regex_group = ()
+                fake_ev.command = text
+
+        # 准备收集上下文
+        call_ctx: Dict[str, Any] = {
+            "texts": [],  # ai_return() 写入的文字
+            "images": [],  # bot.send(bytes/Message(image)) 拦截到的图片（不传给 AI）
+            "bot_messages": [],  # bot.send(str/Message(text)) 拦截到的文字
+        }
+
+        token = _AI_CALL_CONTEXT.set(call_ctx)
+        mock_bot = MockBot(real_bot, call_ctx)
+
+        try:
+            await func(mock_bot, fake_ev)
+        finally:
+            _AI_CALL_CONTEXT.reset(token)
+
+        # 将图片暂存到 ToolContext.extra，供 send_trigger_images 工具取用
+        if call_ctx["images"]:
+            ctx.deps.extra["pending_trigger_images"] = call_ctx["images"]
+
+        # 组装返回值（只包含纯文本，图片数据绝不进入返回值）
+        parts: List[str] = []
+        parts.extend(call_ctx["texts"])
+        parts.extend(call_ctx["bot_messages"])
+
+        if call_ctx["images"]:
+            image_count = len(call_ctx["images"])
+            parts.append(
+                f"[已生成 {image_count} 张图片。"
+                f"请调用 send_trigger_images 工具将图片发送给用户，"
+                f"或根据用户意图决定是否发送。]"
+            )
+
+        if parts:
+            return "\n".join(parts)
+
+        # 如果触发器没有调用 ai_return() 也没有 send 内容，返回通用成功提示
+        return f"✅ 命令 [{primary_keyword}] 已执行，结果已发送给用户。"
+
+    # 手动设置元数据，使 PydanticAI 能正确解析
+    _ai_tool_wrapper.__name__ = tool_func_name
+    _ai_tool_wrapper.__qualname__ = func.__qualname__
+    _ai_tool_wrapper.__module__ = func.__module__
+    _ai_tool_wrapper.__doc__ = to_ai_doc
+
+    # 构造 __annotations__ 和 __signature__
+    _ai_tool_wrapper.__annotations__ = {
+        "ctx": RunContext[ToolContext],
+        "text": str,
+        "return": str,
+    }
+
+    new_params = [
+        inspect.Parameter(
+            "ctx",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=RunContext[ToolContext],
+        ),
+        inspect.Parameter(
+            "text",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=str,
+        ),
+    ]
+    _ai_tool_wrapper.__signature__ = inspect.Signature(
+        parameters=new_params,
+        return_annotation=str,
+    )
+
+    # 注册到 PydanticAI Tool
+    tool_obj = Tool(_ai_tool_wrapper, takes_ctx=True)
+    plugin_name = _get_plugin_name_from_module(func.__module__)
+
+    tool_base = ToolBase(
+        name=tool_func_name,
+        description=to_ai_doc,
+        plugin=plugin_name,
+        tool=tool_obj,
+    )
+
+    if "by_trigger" not in _TOOL_REGISTRY:
+        _TOOL_REGISTRY["by_trigger"] = {}
+
+    _TOOL_REGISTRY["by_trigger"][tool_func_name] = tool_base
+    logger.info(
+        f"🧠 [Trigger→AI] 触发器 [{primary_keyword}] 的函数 [{tool_func_name}] "
+        f"已注册为 AI 工具 (分类: by_trigger, 插件: {plugin_name})"
+    )
+
+
+# ─── send_trigger_images 工具 ─────────────────────────────────────────────────
+
+
+async def _send_trigger_images(ctx: RunContext[ToolContext]) -> str:
+    """
+    将本次触发器工具调用中生成的图片发送给用户。
+
+    当触发器工具返回值中提到"已生成图片"时，AI 可调用此工具来真正发送图片。
+    如果 AI 判断图片不适合发送（如用户只是询问数据），可以不调用此工具。
+    """
+    images = ctx.deps.extra.get("pending_trigger_images")
+    if not images:
+        return "没有待发送的图片。"
+
+    real_bot = ctx.deps.bot
+    assert real_bot is not None, "发送图片时 bot 不能为 None"
+
+    for img in images:
+        await real_bot.send(img)
+
+    ctx.deps.extra.pop("pending_trigger_images", None)
+    return f"✅ 已发送 {len(images)} 张图片给用户。"
+
+
+# 手动设置元数据
+_send_trigger_images.__name__ = "send_trigger_images"
+_send_trigger_images.__qualname__ = "send_trigger_images"
+_send_trigger_images.__module__ = __name__
+_send_trigger_images.__doc__ = (
+    "将本次触发器工具调用中生成的图片发送给用户。"
+    "当触发器工具返回值中提到'已生成图片'时，调用此工具来真正发送。"
+    "如果 AI 判断图片不适合发送，可以不调用此工具。"
+)
+_send_trigger_images.__annotations__ = {
+    "ctx": RunContext[ToolContext],
+    "return": str,
+}
+_send_trigger_images.__signature__ = inspect.Signature(
+    parameters=[
+        inspect.Parameter(
+            "ctx",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=RunContext[ToolContext],
+        ),
+    ],
+    return_annotation=str,
+)
+
+# 注册 send_trigger_images 工具
+_tool_obj = Tool(_send_trigger_images, takes_ctx=True)
+_tool_base = ToolBase(
+    name="send_trigger_images",
+    description=_send_trigger_images.__doc__ or "",
+    plugin="core",
+    tool=_tool_obj,
+)
+if "by_trigger" not in _TOOL_REGISTRY:
+    _TOOL_REGISTRY["by_trigger"] = {}
+_TOOL_REGISTRY["by_trigger"]["send_trigger_images"] = _tool_base

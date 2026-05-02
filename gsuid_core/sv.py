@@ -12,6 +12,7 @@ from gsuid_core.config import core_config, plugins_sample, plugin_config_store
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.trigger import Trigger
+from gsuid_core.ai_core.trigger_bridge import _register_trigger_as_ai_tool
 
 
 class SVList:
@@ -324,6 +325,7 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ):
         def deco(func: Callable) -> Callable:
             if isinstance(keyword, str):
@@ -373,6 +375,16 @@ class SV:
                         )
                         logger.trace(f"载入{type}触发器【{_k}】!")
 
+            # 新增：如果声明了 to_ai，将函数注册为 AI 工具
+            if to_ai.strip():
+                _register_trigger_as_ai_tool(
+                    func=func,
+                    keyword=keyword,
+                    to_ai_doc=to_ai.strip(),
+                    sv=self,
+                    trigger_type=type,
+                )
+
             @wraps(func)
             async def wrapper(bot: Bot, msg) -> Optional[Callable]:
                 result = await func(bot, msg)
@@ -388,8 +400,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("fullmatch", keyword, block, to_me, prefix)
+        return self._on("fullmatch", keyword, block, to_me, prefix, to_ai=to_ai)
 
     def on_prefix(
         self,
@@ -397,8 +410,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("prefix", keyword, block, to_me, prefix)
+        return self._on("prefix", keyword, block, to_me, prefix, to_ai=to_ai)
 
     def on_suffix(
         self,
@@ -406,8 +420,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("suffix", keyword, block, to_me, prefix)
+        return self._on("suffix", keyword, block, to_me, prefix, to_ai=to_ai)
 
     def on_keyword(
         self,
@@ -415,8 +430,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("keyword", keyword, block, to_me, prefix)
+        return self._on("keyword", keyword, block, to_me, prefix, to_ai=to_ai)
 
     def on_command(
         self,
@@ -424,8 +440,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("command", keyword, block, to_me, prefix)
+        return self._on("command", keyword, block, to_me, prefix, to_ai=to_ai)
 
     def on_file(
         self,
@@ -433,8 +450,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("file", file_type, block, to_me, prefix)
+        return self._on("file", file_type, block, to_me, prefix, to_ai=to_ai)
 
     def on_regex(
         self,
@@ -442,8 +460,9 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
-        return self._on("regex", keyword, block, to_me, prefix)
+        return self._on("regex", keyword, block, to_me, prefix, to_ai=to_ai)
 
     def on_message(
         self,
@@ -451,10 +470,11 @@ class SV:
         block: bool = False,
         to_me: bool = False,
         prefix: bool = True,
+        to_ai: str = "",
     ) -> Callable:
         if unique_id is None:
             unique_id = str(uuid.uuid4())
-        return self._on("message", unique_id, block, to_me, prefix)
+        return self._on("message", unique_id, block, to_me, prefix, to_ai=to_ai)
 
 
 def get_plugin_prefixs(plugin_name: str) -> List[str]:

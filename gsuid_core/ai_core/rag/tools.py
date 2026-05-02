@@ -134,8 +134,9 @@ async def sync_tools(tools_map: Dict[str, ToolBase]) -> None:
 def get_main_agent_tools() -> ToolList:
     all_tools_cag = get_registered_tools()
     all_tools = {}
-    for cat in ["self", "buildin"]:
-        all_tools.update(all_tools_cag[cat])
+    for cat in ["self", "buildin", "by_trigger"]:
+        if cat in all_tools_cag:
+            all_tools.update(all_tools_cag[cat])
 
     return [all_tools[tool].tool for tool in all_tools]
 

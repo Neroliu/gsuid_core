@@ -88,7 +88,7 @@ async def upload_asset(
 
 
 @app.get("/api/assets/preview")
-async def preview_asset(path: str, token: Optional[str] = None):
+async def preview_asset(path: str, _user: Dict = Depends(require_auth)):
     """
     预览本地图片
 
@@ -96,21 +96,15 @@ async def preview_asset(path: str, token: Optional[str] = None):
 
     Args:
         path: Base64 编码的文件路径
-        token: 可选的访问令牌
+        _user: 认证用户信息
 
     Returns:
         图片文件响应
 
     Raises:
-        HTTPException 403: 认证失败
         HTTPException 404: 图片不存在
         HTTPException 400: 预览失败
     """
-    # 验证 token
-    from gsuid_core.webconsole.web_api import verify_token
-
-    if not verify_token(token=token):
-        raise HTTPException(status_code=403, detail="Authentication failed")
 
     try:
         import urllib.parse
