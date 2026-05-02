@@ -7,16 +7,16 @@ Git Update 工具模块
 - 回退到指定版本
 - 强制更新（git reset --hard + git pull）
 
-所有 git 操作均通过 asyncio.create_subprocess_shell 异步执行，避免阻塞事件循环。
+所有 git 操作均通过 git_async 模块异步执行，避免阻塞事件循环。
 """
 
-import asyncio
 from typing import List, Optional, TypedDict
 from pathlib import Path
 
 from gsuid_core.logger import logger
 
 from .api import CORE_PATH, PLUGINS_PATH
+from .git_async import run_git, git_pull, git_fetch, git_reset_hard, git_get_current_branch
 
 
 class CommitInfo(TypedDict):
@@ -37,40 +37,6 @@ class GitStatusInfo(TypedDict):
     current_commit: CommitInfo
     is_git_repo: bool
     branch: str
-
-
-async def _run_git(repo_path: Path, *args: str) -> tuple[int, str, str]:
-    """
-    在指定目录下异步执行 git 命令。
-
-    使用 create_subprocess_exec 而非 create_subprocess_shell，
-    避免 Windows cmd.exe 将 %an 等解释为环境变量。
-
-    Args:
-        repo_path: 仓库路径
-        *args: git 子命令及参数
-
-    Returns:
-        (returncode, stdout, stderr)
-    """
-    import os
-
-    env = os.environ.copy()
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    process = await asyncio.create_subprocess_exec(
-        "git",
-        *args,
-        cwd=repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    stdout, stderr = await process.communicate()
-    return (
-        process.returncode or 0,
-        stdout.decode("utf-8", errors="replace").strip(),
-        stderr.decode("utf-8", errors="replace").strip(),
-    )
 
 
 def _parse_commit_line(line: str) -> Optional[CommitInfo]:
@@ -112,7 +78,7 @@ async def get_current_commit(repo_path: Path) -> Optional[CommitInfo]:
     if not (repo_path / ".git").exists():
         return None
 
-    returncode, stdout, stderr = await _run_git(
+    returncode, stdout, stderr = await run_git(
         repo_path,
         "log",
         "-1",
@@ -138,39 +104,7 @@ async def get_current_branch(repo_path: Path) -> str:
     Returns:
         分支名称
     """
-    returncode, stdout, _ = await _run_git(
-        repo_path,
-        "branch",
-        "--show-current",
-    )
-
-    if returncode == 0 and stdout:
-        return stdout
-
-    # detached HEAD 状态，尝试获取远程默认分支
-    returncode, stdout, _ = await _run_git(
-        repo_path,
-        "symbolic-ref",
-        "refs/remotes/origin/HEAD",
-        "--short",
-    )
-
-    if returncode == 0 and stdout and "/" in stdout:
-        # 输出格式: origin/main
-        return stdout.split("/", 1)[1]
-
-    # fallback: 尝试 main 和 master
-    for branch_name in ("main", "master"):
-        returncode, _, _ = await _run_git(
-            repo_path,
-            "rev-parse",
-            "--verify",
-            f"origin/{branch_name}",
-        )
-        if returncode == 0:
-            return branch_name
-
-    return "main"
+    return await git_get_current_branch(repo_path)
 
 
 async def get_remote_commits(
@@ -194,15 +128,15 @@ async def get_remote_commits(
         return []
 
     # 尝试 fetch 获取最新远程信息，失败则使用本地缓存
-    returncode, _, stderr = await _run_git(repo_path, "fetch")
-    if returncode != 0:
-        logger.warning(f"[Git Update] git fetch 失败（将使用本地缓存的远程 ref）: {stderr}")
+    success, message = await git_fetch(repo_path)
+    if not success:
+        logger.warning(f"[Git Update] git fetch 失败（将使用本地缓存的远程 ref）: {message}")
 
     # 获取当前分支
-    branch = await get_current_branch(repo_path)
+    branch = await git_get_current_branch(repo_path)
 
     # 获取远程 commit 列表
-    returncode, stdout, stderr = await _run_git(
+    returncode, stdout, stderr = await run_git(
         repo_path,
         "log",
         f"origin/{branch}",
@@ -243,7 +177,7 @@ async def get_local_commits(
     if not (repo_path / ".git").exists():
         return []
 
-    returncode, stdout, stderr = await _run_git(
+    returncode, stdout, stderr = await run_git(
         repo_path,
         "log",
         f"-{max_count}",
@@ -283,7 +217,7 @@ async def get_git_status(repo_path: Path) -> Optional[GitStatusInfo]:
     if not current_commit:
         return None
 
-    branch = await get_current_branch(repo_path)
+    branch = await git_get_current_branch(repo_path)
 
     return GitStatusInfo(
         name=repo_path.name,
@@ -313,7 +247,7 @@ async def checkout_commit(repo_path: Path, commit_hash: str) -> tuple[bool, str]
         return False, "不是有效的 git 仓库"
 
     # 验证 commit hash 是否存在
-    returncode, _, stderr = await _run_git(
+    returncode, _, stderr = await run_git(
         repo_path,
         "cat-file",
         "-t",
@@ -324,16 +258,11 @@ async def checkout_commit(repo_path: Path, commit_hash: str) -> tuple[bool, str]
         return False, f"无效的 commit hash: {commit_hash}"
 
     # 执行 reset --hard
-    returncode, _, stderr = await _run_git(
-        repo_path,
-        "reset",
-        "--hard",
-        commit_hash,
-    )
+    success, msg = await git_reset_hard(repo_path, commit_hash)
 
-    if returncode != 0:
-        logger.warning(f"[Git Update] reset --hard 失败: {stderr}")
-        return False, f"reset --hard 失败: {stderr}"
+    if not success:
+        logger.warning(f"[Git Update] reset --hard 失败: {msg}")
+        return False, f"reset --hard 失败: {msg}"
 
     logger.info(f"[Git Update] 已回退到 commit: {commit_hash}")
     return True, f"已回退到 commit: {commit_hash[:7]}"
@@ -355,32 +284,26 @@ async def force_update(repo_path: Path) -> tuple[bool, str]:
         return False, "不是有效的 git 仓库"
 
     # 获取当前分支
-    branch = await get_current_branch(repo_path)
+    branch = await git_get_current_branch(repo_path)
     if branch == "unknown":
         return False, "无法获取当前分支信息"
 
     # 先 fetch
-    returncode, _, stderr = await _run_git(repo_path, "fetch")
-    if returncode != 0:
-        return False, f"git fetch 失败: {stderr}"
+    success, message = await git_fetch(repo_path)
+    if not success:
+        return False, f"git fetch 失败: {message}"
 
     # git reset --hard origin/{branch}
-    returncode, stdout, stderr = await _run_git(
-        repo_path,
-        "reset",
-        "--hard",
-        f"origin/{branch}",
-    )
-
-    if returncode != 0:
-        logger.warning(f"[Git Update] git reset --hard 失败: {stderr}")
-        return False, f"git reset --hard 失败: {stderr}"
+    success, message = await git_reset_hard(repo_path, f"origin/{branch}")
+    if not success:
+        logger.warning(f"[Git Update] git reset --hard 失败: {message}")
+        return False, f"git reset --hard 失败: {message}"
 
     # git pull
-    returncode, stdout, stderr = await _run_git(repo_path, "pull")
-    if returncode != 0:
-        logger.warning(f"[Git Update] git pull 失败: {stderr}")
-        return False, f"git pull 失败: {stderr}"
+    success, message = await git_pull(repo_path)
+    if not success:
+        logger.warning(f"[Git Update] git pull 失败: {message}")
+        return False, f"git pull 失败: {message}"
 
     # 获取更新后的 commit 信息
     current_commit = await get_current_commit(repo_path)

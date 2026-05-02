@@ -36,6 +36,9 @@ async def chatWithHistory(req: Dict):
     """
     带历史对话的 AI 聊天接口
     """
+
+    return None
+
     from gsuid_core.bot import Bot
     from gsuid_core.ai_core.gs_agent import create_agent
     from gsuid_core.ai_core.memory.config import memory_config

@@ -11,7 +11,7 @@ from gsuid_core.utils.plugins_update._plugins import (
     update_plugins,
     update_all_plugins,
     set_proxy_all_plugins,
-    update_from_git_in_tread,
+    update_from_git_async,
 )
 from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
 from gsuid_core.utils.plugins_update.reload_plugin import reload_plugin
@@ -41,7 +41,7 @@ async def send_core_update_msg(bot: Bot, ev: Event):
         log_list = await update_plugins(txt, level)
     else:
         await bot.send("🔔 正在尝试更新早柚核心, 请稍等...")
-        log_list = await update_from_git_in_tread(level)
+        log_list = await update_from_git_async(level)
 
     await bot.send(log_list)
 
@@ -145,6 +145,6 @@ async def send_core_all_update_msg(bot: Bot, ev: Event):
     else:
         level = 0
 
-    log_list = await update_from_git_in_tread(min(level, 1))
+    log_list = await update_from_git_async(min(level, 1))
     log_list.extend(await update_all_plugins(level))
     await bot.send(log_list)

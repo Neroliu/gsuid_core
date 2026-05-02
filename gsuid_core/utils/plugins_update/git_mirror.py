@@ -12,7 +12,6 @@ Git Mirror 工具模块
 - 批量替换所有插件的 git remote URL
 """
 
-import asyncio
 from typing import Dict, List, Optional, TypedDict
 from pathlib import Path
 
@@ -20,6 +19,7 @@ from gsuid_core.logger import logger
 from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
 
 from .api import CORE_PATH, PLUGINS_PATH
+from .git_async import git_get_remote_url, git_set_remote_url
 
 # GitHub 原始地址前缀
 GITHUB_PREFIX = "https://github.com/"
@@ -53,32 +53,6 @@ class PluginGitInfo(TypedDict):
     mirror: str
 
 
-async def _run_git(repo_path: Path, *args: str) -> tuple[int, str, str]:
-    """
-    在指定目录下异步执行 git 命令。
-
-    Args:
-        repo_path: 仓库路径
-        *args: git 子命令及参数
-
-    Returns:
-        (returncode, stdout, stderr)
-    """
-    cmd = " ".join(["git", *args])
-    process = await asyncio.create_subprocess_shell(
-        cmd,
-        cwd=repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    return (
-        process.returncode or 0,
-        stdout.decode().strip(),
-        stderr.decode().strip(),
-    )
-
-
 async def get_remote_url(repo_path: Path) -> Optional[str]:
     """
     获取指定仓库的 origin remote URL。
@@ -89,13 +63,7 @@ async def get_remote_url(repo_path: Path) -> Optional[str]:
     Returns:
         remote URL 字符串，如果不是 git 仓库则返回 None
     """
-    if not (repo_path / ".git").exists():
-        return None
-
-    returncode, stdout, _ = await _run_git(repo_path, "remote", "get-url", "origin")
-    if returncode != 0 or not stdout:
-        return None
-    return stdout
+    return await git_get_remote_url(repo_path)
 
 
 def _is_proxy_prefix(prefix: str) -> bool:
@@ -440,10 +408,10 @@ async def set_plugin_mirror(
         return True, f"{plugin_name}: 已是目标地址，无需修改"
 
     # 执行 git remote set-url
-    returncode, _, stderr = await _run_git(plugin_path, "remote", "set-url", "origin", new_url)
-    if returncode != 0:
-        logger.error(f"[Git镜像] 设置 {plugin_name} remote URL 失败: {stderr}")
-        return False, f"{plugin_name}: 设置失败 - {stderr}"
+    success, msg = await git_set_remote_url(plugin_path, new_url)
+    if not success:
+        logger.error(f"[Git镜像] 设置 {plugin_name} remote URL 失败: {msg}")
+        return False, f"{plugin_name}: 设置失败 - {msg}"
 
     logger.info(f"[Git镜像] {plugin_name}: {current_url} -> {new_url}")
     return True, f"{plugin_name}: {current_url} -> {new_url}"

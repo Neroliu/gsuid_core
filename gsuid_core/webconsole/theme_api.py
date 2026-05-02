@@ -4,12 +4,14 @@ Theme APIs
 """
 
 import json
+from typing import Dict
 
-from fastapi import Header, Request
+from fastapi import Header, Depends, Request
 from pydantic import BaseModel
 
 from gsuid_core.data_store import THEME_CONFIG_PATH
 from gsuid_core.webconsole.app_app import app
+from gsuid_core.webconsole.web_api import require_auth
 
 
 class ThemeConfigRequest(BaseModel):
@@ -81,12 +83,9 @@ async def get_theme_config(
 async def save_theme_config_endpoint(
     request: Request,
     config: ThemeConfigRequest,
-    authorization: str | None = Header(default=None),
+    _: Dict = Depends(require_auth),
 ):
     """Save theme configuration"""
-    # 主题配置允许未登录时也保存（前端会在本地存储中保存设置）
-    # 但我们仍然尝试验证 token，如果验证成功可以记录操作者信息
-
     config_dict = config.model_dump()
     if save_theme_config(config_dict):
         return {"status": 0, "msg": "主题配置已保存"}

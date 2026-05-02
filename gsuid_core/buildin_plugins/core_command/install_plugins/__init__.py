@@ -47,7 +47,7 @@ async def send_plugins_install(bot: Bot, ev: Event):
         return await bot.send(f"❌ 不存在该插件...可以使用[{prefix}刷新插件列表]获取最新列表!")
 
     await bot.send("📦 开始安装...请稍等一段时间...")
-    im = install_plugins(plugins)
+    im = await install_plugins(plugins)
     await bot.send(im)
 
 

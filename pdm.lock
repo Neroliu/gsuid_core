@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:1d0d43c6bd5d6fe4345dd03615079c1d6a135a6aeb73d662143a36568c25c339"
+content_hash = "sha256:683ba05c810cc8d00c15e4e3b6d4071b14288f82a599d0cf456d17cd6f882b95"
 
 [[metadata.targets]]
 requires_python = "~=3.11"
@@ -789,7 +789,7 @@ files = [
 
 [[package]]
 name = "cyclopts"
-version = "4.11.0"
+version = "4.11.1"
 requires_python = ">=3.10"
 summary = "Intuitive, easy CLIs based on type hints."
 groups = ["default"]
@@ -802,8 +802,8 @@ dependencies = [
     "typing-extensions>=4.8.0; python_version < \"3.11\"",
 ]
 files = [
-    {file = "cyclopts-4.11.0-py3-none-any.whl", hash = "sha256:34318e3823b44b5baa754a5e37ec70a5c17dc81c65e4295ed70e17bc1aeae50d"},
-    {file = "cyclopts-4.11.0.tar.gz", hash = "sha256:1ffcb9990dbd56b90da19980d31596de9e99019980a215a5d76cf88fe452e94d"},
+    {file = "cyclopts-4.11.1-py3-none-any.whl", hash = "sha256:178cf3a892c22fc35815f352d8433cc70aaeec4f930ce3b9b15a6b79d7ce158e"},
+    {file = "cyclopts-4.11.1.tar.gz", hash = "sha256:6c1d4b55a1d05bd9e1fdc4d7800e9ce69cf16f6141db34e5a5c9857bdb81887f"},
 ]
 
 [[package]]
@@ -1145,35 +1145,6 @@ dependencies = [
 files = [
     {file = "genai_prices-0.0.57-py3-none-any.whl", hash = "sha256:14e50fb69cdc5a06ddb2a6df5a7fe06741b9e44304ce3f1728f56abdf1856cca"},
     {file = "genai_prices-0.0.57.tar.gz", hash = "sha256:6e101e9c53975557ceffa237b0995787d81fe75aac12410f2898504188bcad89"},
-]
-
-[[package]]
-name = "gitdb"
-version = "4.0.12"
-requires_python = ">=3.7"
-summary = "Git Object Database"
-groups = ["default"]
-dependencies = [
-    "smmap<6,>=3.0.1",
-]
-files = [
-    {file = "gitdb-4.0.12-py3-none-any.whl", hash = "sha256:67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf"},
-    {file = "gitdb-4.0.12.tar.gz", hash = "sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571"},
-]
-
-[[package]]
-name = "gitpython"
-version = "3.1.49"
-requires_python = ">=3.7"
-summary = "GitPython is a Python library used to interact with Git repositories"
-groups = ["default"]
-dependencies = [
-    "gitdb<5,>=4.0.1",
-    "typing-extensions>=3.10.0.2; python_version < \"3.10\"",
-]
-files = [
-    {file = "gitpython-3.1.49-py3-none-any.whl", hash = "sha256:024b0422d7f84d15cd794844e029ffebd4c5d42a7eb9b936b458697ef550a02c"},
-    {file = "gitpython-3.1.49.tar.gz", hash = "sha256:42f9399c9eb33fc581014bedd76049dfbaf6375aa2a5754575966387280315e1"},
 ]
 
 [[package]]
@@ -4305,17 +4276,6 @@ groups = ["default"]
 files = [
     {file = "six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
     {file = "six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"},
-]
-
-[[package]]
-name = "smmap"
-version = "5.0.3"
-requires_python = ">=3.7"
-summary = "A pure Python implementation of a sliding window memory map manager"
-groups = ["default"]
-files = [
-    {file = "smmap-5.0.3-py3-none-any.whl", hash = "sha256:c106e05d5a61449cf6ba9a1e650227ecfb141590d2a98412103ff35d89fc7b2f"},
-    {file = "smmap-5.0.3.tar.gz", hash = "sha256:4d9debb8b99007ae47165abc08670bd74cb74b5227dda7f643eccc4e9eb5642c"},
 ]
 
 [[package]]

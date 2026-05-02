@@ -1,0 +1,370 @@
+"""
+Git Async 工具模块
+
+提供统一的异步 git 命令执行基础设施，替代 gitpython 库。
+所有 git 操作均通过 asyncio.create_subprocess_exec 异步执行，
+兼容 Windows/Linux/macOS 等主流系统。
+
+特性：
+- 统一的 _run_git 入口，设置 GIT_TERMINAL_PROMPT=0 防止凭证提示卡死
+- 提供 clone、pull、fetch、checkout、remote 管理等常用操作
+- 凭证请求自动超时跳过并报告
+"""
+
+import os
+import asyncio
+from typing import Optional
+from pathlib import Path
+
+from gsuid_core.logger import logger
+
+# git 命令默认超时时间（秒）
+GIT_TIMEOUT = 30
+
+# clone 命令超时时间（秒），仓库较大时需要更长时间
+GIT_CLONE_TIMEOUT = 120
+
+
+async def run_git(repo_path: Path, *args: str, timeout: int = GIT_TIMEOUT) -> tuple[int, str, str]:
+    """
+    在指定目录下异步执行 git 命令。
+
+    使用 create_subprocess_exec 而非 create_subprocess_shell，
+    避免 Windows cmd.exe 将 %an 等解释为环境变量，同时兼容所有平台。
+
+    设置 GIT_TERMINAL_PROMPT=0 防止 git 在需要凭证时弹出交互式提示导致卡死。
+
+    Args:
+        repo_path: 仓库路径
+        *args: git 子命令及参数
+        timeout: 命令超时时间（秒），默认 30 秒
+
+    Returns:
+        (returncode, stdout, stderr)
+        超时时返回 (-999, "", "timeout")
+    """
+    cmd_str = " ".join(["git", *args])
+    logger.info(f"[Git Async] 执行命令: {cmd_str} @ {repo_path}")
+
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        *args,
+        cwd=repo_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[Git Async] 命令超时({timeout}s): {cmd_str} @ {repo_path}")
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        return (-999, "", "timeout")
+
+    returncode = process.returncode or 0
+    stdout_str = stdout.decode("utf-8", errors="replace").strip()
+    stderr_str = stderr.decode("utf-8", errors="replace").strip()
+
+    if returncode != 0:
+        logger.warning(f"[Git Async] 命令失败(returncode={returncode}): {cmd_str} @ {repo_path}")
+        if stderr_str:
+            logger.warning(f"[Git Async] stderr: {stderr_str}")
+    else:
+        logger.success(f"[Git Async] 命令成功: {cmd_str} @ {repo_path}")
+        if stdout_str:
+            logger.debug(f"[Git Async] stdout: {stdout_str[:200]}{'...' if len(stdout_str) > 200 else ''}")
+
+    return (returncode, stdout_str, stderr_str)
+
+
+async def git_clone(
+    url: str,
+    target_path: Path,
+    branch: Optional[str] = None,
+    depth: int = 1,
+    timeout: int = GIT_CLONE_TIMEOUT,
+) -> tuple[bool, str]:
+    """
+    异步克隆 git 仓库。
+
+    Args:
+        url: 仓库 URL
+        target_path: 目标路径
+        branch: 指定分支（可选）
+        depth: 克隆深度，默认 1
+        timeout: 超时时间（秒），默认 120 秒
+
+    Returns:
+        (success, message)
+    """
+    args = ["clone", "--depth", str(depth)]
+    if branch:
+        args.extend(["--branch", branch])
+    args.extend([url, str(target_path)])
+
+    returncode, stdout, stderr = await run_git(Path("."), *args, timeout=timeout)
+
+    if returncode == -999:
+        return False, f"克隆超时({timeout}s)，可能需要 git 凭证或网络问题: {url}"
+
+    if returncode != 0:
+        logger.error(f"[Git Async] clone 失败: {stderr}")
+        return False, f"克隆失败: {stderr}"
+
+    logger.info(f"[Git Async] clone 成功: {url} -> {target_path}")
+    return True, "克隆成功"
+
+
+async def git_fetch(repo_path: Path, timeout: int = GIT_TIMEOUT) -> tuple[bool, str]:
+    """
+    异步执行 git fetch。
+
+    Args:
+        repo_path: 仓库路径
+        timeout: 超时时间（秒）
+
+    Returns:
+        (success, message)
+    """
+    returncode, _, stderr = await run_git(repo_path, "fetch", timeout=timeout)
+
+    if returncode == -999:
+        return False, f"fetch 超时({timeout}s)，可能需要 git 凭证"
+
+    if returncode != 0:
+        logger.warning(f"[Git Async] fetch 失败: {stderr}")
+        return False, f"fetch 失败: {stderr}"
+
+    return True, "fetch 成功"
+
+
+async def git_pull(repo_path: Path, timeout: int = GIT_TIMEOUT) -> tuple[bool, str]:
+    """
+    异步执行 git pull。
+
+    Args:
+        repo_path: 仓库路径
+        timeout: 超时时间（秒）
+
+    Returns:
+        (success, message)
+    """
+    returncode, stdout, stderr = await run_git(repo_path, "pull", timeout=timeout)
+
+    if returncode == -999:
+        return False, f"pull 超时({timeout}s)，可能需要 git 凭证"
+
+    if returncode != 0:
+        logger.warning(f"[Git Async] pull 失败: {stderr}")
+        return False, f"pull 失败: {stderr}"
+
+    return True, stdout
+
+
+async def git_reset_hard(repo_path: Path, target: str = "HEAD") -> tuple[bool, str]:
+    """
+    异步执行 git reset --hard。
+
+    Args:
+        repo_path: 仓库路径
+        target: 目标 ref，默认 "HEAD"
+
+    Returns:
+        (success, message)
+    """
+    returncode, _, stderr = await run_git(repo_path, "reset", "--hard", target)
+
+    if returncode != 0:
+        logger.warning(f"[Git Async] reset --hard 失败: {stderr}")
+        return False, f"reset --hard 失败: {stderr}"
+
+    return True, f"已重置到 {target}"
+
+
+async def git_clean_xdf(repo_path: Path) -> tuple[bool, str]:
+    """
+    异步执行 git clean -xdf（删除所有未跟踪文件）。
+
+    Args:
+        repo_path: 仓库路径
+
+    Returns:
+        (success, message)
+    """
+    returncode, _, stderr = await run_git(repo_path, "clean", "-xdf")
+
+    if returncode != 0:
+        logger.warning(f"[Git Async] clean -xdf 失败: {stderr}")
+        return False, f"clean -xdf 失败: {stderr}"
+
+    return True, "clean 完成"
+
+
+async def git_get_remote_url(repo_path: Path) -> Optional[str]:
+    """
+    获取指定仓库的 origin remote URL。
+
+    Args:
+        repo_path: 仓库路径
+
+    Returns:
+        remote URL 字符串，如果不是 git 仓库则返回 None
+    """
+    if not (repo_path / ".git").exists():
+        return None
+
+    returncode, stdout, _ = await run_git(repo_path, "remote", "get-url", "origin")
+    if returncode != 0 or not stdout:
+        return None
+    return stdout
+
+
+async def git_set_remote_url(repo_path: Path, url: str) -> tuple[bool, str]:
+    """
+    设置指定仓库的 origin remote URL。
+
+    Args:
+        repo_path: 仓库路径
+        url: 新的 remote URL
+
+    Returns:
+        (success, message)
+    """
+    returncode, _, stderr = await run_git(repo_path, "remote", "set-url", "origin", url)
+
+    if returncode != 0:
+        logger.error(f"[Git Async] set-url 失败: {stderr}")
+        return False, f"设置 remote URL 失败: {stderr}"
+
+    return True, f"已设置 remote URL: {url}"
+
+
+async def git_get_current_branch(repo_path: Path) -> str:
+    """
+    获取仓库当前分支名称。
+
+    在 detached HEAD 状态下，尝试获取默认分支名（main/master）。
+
+    Args:
+        repo_path: 仓库路径
+
+    Returns:
+        分支名称
+    """
+    returncode, stdout, _ = await run_git(repo_path, "branch", "--show-current")
+
+    if returncode == 0 and stdout:
+        return stdout
+
+    # detached HEAD 状态，尝试获取远程默认分支
+    returncode, stdout, _ = await run_git(
+        repo_path,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "--short",
+    )
+
+    if returncode == 0 and stdout and "/" in stdout:
+        return stdout.split("/", 1)[1]
+
+    # fallback: 尝试 main 和 master
+    for branch_name in ("main", "master"):
+        returncode, _, _ = await run_git(
+            repo_path,
+            "rev-parse",
+            "--verify",
+            f"origin/{branch_name}",
+        )
+        if returncode == 0:
+            return branch_name
+
+    return "main"
+
+
+async def git_get_log(
+    repo_path: Path,
+    ref: str = "HEAD",
+    max_count: int = 5,
+) -> list[str]:
+    """
+    获取 git log 的 commit message 列表。
+
+    Args:
+        repo_path: 仓库路径
+        ref: 起始 ref，默认 "HEAD"
+        max_count: 最大返回数量
+
+    Returns:
+        commit message 列表
+    """
+    returncode, stdout, stderr = await run_git(
+        repo_path,
+        "log",
+        ref,
+        f"-{max_count}",
+        "--format=%s",
+    )
+
+    if returncode != 0 or not stdout:
+        return []
+
+    return [line.strip() for line in stdout.split("\n") if line.strip()]
+
+
+async def git_diff_commits(
+    repo_path: Path,
+    from_ref: str,
+    to_ref: str,
+    max_count: int = 40,
+) -> list[str]:
+    """
+    获取两个 ref 之间的 commit message 列表。
+
+    Args:
+        repo_path: 仓库路径
+        from_ref: 起始 ref
+        to_ref: 结束 ref
+        max_count: 最大返回数量
+
+    Returns:
+        commit message 列表
+    """
+    returncode, stdout, stderr = await run_git(
+        repo_path,
+        "log",
+        f"{from_ref}..{to_ref}",
+        f"-{max_count}",
+        "--format=%s",
+    )
+
+    if returncode != 0 or not stdout:
+        return []
+
+    return [line.strip() for line in stdout.split("\n") if line.strip()]
+
+
+async def git_is_valid_repo(repo_path: Path) -> bool:
+    """
+    检查路径是否是有效的 git 仓库。
+
+    Args:
+        repo_path: 仓库路径
+
+    Returns:
+        是否是有效的 git 仓库
+    """
+    if not repo_path.exists() or not repo_path.is_dir():
+        return False
+
+    returncode, _, _ = await run_git(repo_path, "rev-parse", "--git-dir")
+    return returncode == 0

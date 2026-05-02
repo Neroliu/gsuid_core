@@ -1,15 +1,11 @@
 import os
-import time
 import shutil
 import asyncio
 import subprocess
 from typing import Dict, List, Union, Optional
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp
-from git.exc import GitCommandError, NoSuchPathError, InvalidGitRepositoryError
-from git.repo import Repo
 
 from gsuid_core.gss import gss
 from gsuid_core.logger import logger
@@ -17,6 +13,17 @@ from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
 
 from .api import CORE_PATH, PLUGINS_PATH, plugins_lib
 from .utils import check_start_tool
+from .git_async import (
+    run_git,
+    git_pull,
+    git_clone,
+    git_fetch,
+    git_clean_xdf,
+    git_reset_hard,
+    git_diff_commits,
+    git_is_valid_repo,
+    git_get_current_branch,
+)
 from .reload_plugin import reload_plugin
 
 plugins_list: Dict[str, Dict[str, str]] = {}
@@ -160,7 +167,7 @@ async def update_all_plugins(level: int = 0) -> List[str]:
     log_list = []
     for plugin in PLUGINS_PATH.iterdir():
         if _is_plugin(plugin):
-            log_list.extend(await update_from_git_in_tread(level, plugin))
+            log_list.extend(await update_from_git_async(level, plugin))
     return log_list
 
 
@@ -228,7 +235,7 @@ async def get_plugins_url(name: str) -> Optional[Dict[str, str]]:
             return None
 
 
-def install_plugins(plugins: Dict[str, str]) -> str:
+async def install_plugins(plugins: Dict[str, str]) -> str:
     from .git_mirror import SSH_GITHUB_TEMPLATE, _is_ssh_mode, _is_proxy_prefix
 
     git_mirror: str = core_plugins_config.get_config("GitMirror").data
@@ -260,12 +267,13 @@ def install_plugins(plugins: Dict[str, str]) -> str:
     path = PLUGINS_PATH / plugin_name
     if path.exists():
         return "该插件已经安装过了!"
-    config = {"single_branch": True, "depth": 1}
 
-    if plugins["branch"] != "main":
-        config["branch"] = plugins["branch"]
+    branch = plugins["branch"] if plugins["branch"] != "main" else None
 
-    Repo.clone_from(git_path, path, **config)
+    success, message = await git_clone(git_path, path, branch=branch, depth=1)
+    if not success:
+        return f"❌ 插件{plugin_name}安装失败: {message}"
+
     logger.info(f"插件{plugin_name}安装成功!")
     if is_reload:
         gss.load_plugin(path)
@@ -276,61 +284,56 @@ async def install_plugin(plugin_name: str) -> int:
     url = await get_plugins_url(plugin_name)
     if url is None:
         return -1
-    install_plugins(url)
+    await install_plugins(url)
     return 0
 
 
-def check_plugins(plugin_name: str) -> Optional[Repo]:
+async def check_plugins(plugin_name: str) -> Optional[Path]:
     path = PLUGINS_PATH / plugin_name
     if path.exists():
-        try:
-            repo = Repo(path)
-        except InvalidGitRepositoryError:
-            return None
-        return repo
+        if await git_is_valid_repo(path):
+            return path
+        return None
     else:
         return None
 
 
-def check_can_update(repo: Repo) -> bool:
-    try:
-        remote = repo.remote()  # 获取远程仓库
-        remote.fetch()  # 从远程获取最新版本
-    except GitCommandError as e:
-        logger.error(f"发生Git命令错误{e}!")
+async def check_can_update(repo_path: Path) -> bool:
+    """检查仓库是否有可用更新"""
+    success, _ = await git_fetch(repo_path)
+    if not success:
         return False
-    local_commit = repo.commit()  # 获取本地最新提交
-    remote_commit = remote.fetch()[0].commit  # 获取远程最新提交
-    if local_commit.hexsha == remote_commit.hexsha:  # 比较本地和远程的提交哈希值
+
+    branch = await git_get_current_branch(repo_path)
+
+    # 比较本地和远程的 commit hash
+    returncode_local, local_hash, _ = await run_git(repo_path, "rev-parse", "HEAD")
+    returncode_remote, remote_hash, _ = await run_git(repo_path, "rev-parse", f"origin/{branch}")
+
+    if returncode_local != 0 or returncode_remote != 0:
         return False
-    return True
+
+    return local_hash != remote_hash
 
 
 async def async_check_plugins(plugin_name: str):
     path = PLUGINS_PATH / plugin_name
     if path.exists():
         try:
-            cmd = "git fetch && git status"
-            proc = await asyncio.create_subprocess_shell(cmd, cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            # 增加超时处理，最多等待10秒
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode != 0:
-                logger.warning(f"检查插件 {plugin_name} 状态失败: {stderr.decode()}")
-                return 0  # 0表示检查失败，未知状态
-            if b"Your branch is up to date" in stdout:
+            success, _ = await git_fetch(path, timeout=10)
+            if not success:
+                return 0
+
+            returncode, stdout, _ = await run_git(path, "status")
+            if returncode != 0:
+                return 0
+
+            if "Your branch is up to date" in stdout:
                 return 4
-            elif b"not a git repository" in stdout:
+            elif "not a git repository" in stdout:
                 return 3
             else:
                 return 1
-        except asyncio.TimeoutError:
-            logger.warning(f"检查插件 {plugin_name} 状态超时")
-            if proc.returncode is None:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-            return 0
         except Exception as e:
             logger.warning(f"检查插件 {plugin_name} 状态异常: {str(e)}")
             return 0
@@ -361,167 +364,119 @@ async def set_proxy(repo: Path, proxy: Optional[str] = None) -> str:
     return message
 
 
-async def async_change_plugin_url(repo: Path, new_url: str):
-    try:
-        process = await asyncio.create_subprocess_shell(
-            f"git remote set-url origin {new_url}",
-            cwd=repo,
-            stdout=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await process.communicate()
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"[core插件设置远程地址] 失败, 错误信息: {e}")
-        return False
-
-
-def sync_change_plugin_url(repo: Path, new_url: str):
-    try:
-        command = f"git remote set-url origin {new_url}"
-        subprocess.run(
-            command,
-            cwd=repo,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-            check=True,
-            text=True,
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"[core插件设置远程地址] 失败, 错误信息: {e}")
-        return False
-
-
-def sync_get_plugin_url(repo: Path) -> Optional[str]:
-    try:
-        command = "git remote get-url origin"
-        process = subprocess.run(
-            command,
-            cwd=repo,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-            check=True,
-        )
-        stdout = process.stdout
-        original_url = stdout.decode().strip()
-        return original_url
-    except subprocess.CalledProcessError as e:
-        logger.error(f"[core插件设置远程地址] 失败, 错误信息: {e}")
-        return None
-
-
-async def update_from_git_in_tread(
-    level: int = 0,
-    repo_like: Union[str, Path, None] = None,
-    log_key: List[str] = [],
-    log_limit: int = 5,
-):
-    if not hasattr(asyncio, "to_thread"):
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as executor:
-            result = await loop.run_in_executor(executor, update_from_git, level, repo_like, log_key, log_limit)
-    else:
-        result = await asyncio.to_thread(update_from_git, level, repo_like, log_key, log_limit)
-    return result
-
-
-def update_from_git(
+async def update_from_git_async(
     level: int = 0,
     repo_like: Union[str, Path, None] = None,
     log_key: List[str] = [],
     log_limit: int = 5,
 ) -> List[str]:
-    try:
-        if repo_like is None:
-            repo = Repo(CORE_PATH)
-            plugin_name = "早柚核心"
-            if is_install_dep:
-                run_install(CORE_PATH)
-        elif isinstance(repo_like, Path):
-            repo = Repo(repo_like)
-            plugin_name = repo_like.name
-        else:
-            repo = check_plugins(repo_like)
-            plugin_name = repo_like
-    except InvalidGitRepositoryError:
+    """
+    异步更新 git 仓库（替代原来的 update_from_git + update_from_git_in_tread）。
+
+    Args:
+        level: 更新等级 0=普通, 1=强制(reset --hard), 2=强行强制(clean -xdf + reset)
+        repo_like: 仓库路径/名称，None 表示更新 core 本体
+        log_key: 过滤 commit message 的关键字
+        log_limit: 最大返回日志条数
+
+    Returns:
+        日志列表
+    """
+    # 解析仓库路径
+    if repo_like is None:
+        repo_path = CORE_PATH
+        plugin_name = "早柚核心"
+        if is_install_dep:
+            run_install(CORE_PATH)
+    elif isinstance(repo_like, Path):
+        repo_path = repo_like
+        plugin_name = repo_like.name
+    else:
+        checked = await check_plugins(repo_like)
+        plugin_name = repo_like
+        if not checked:
+            logger.warning("[更新] 更新失败, 该插件不存在!")
+            return ["更新失败, 不存在该插件!"]
+        repo_path = checked
+
+    # 验证是否是有效的 git 仓库
+    if not await git_is_valid_repo(repo_path):
         logger.warning("[更新] 更新失败, 非有效Repo路径!")
         return ["更新失败, 该路径并不是一个有效的GitRepo路径, 请使用`git clone`安装插件..."]
-    except NoSuchPathError:
-        logger.warning("[更新] 更新失败, 该路径不存在!")
-        return ["更新失败, 路径/插件不存在!"]
-
-    if not repo:
-        logger.warning("[更新] 更新失败, 该插件不存在!")
-        return ["更新失败, 不存在该插件!"]
-
-    o = repo.remotes.origin
 
     logger.info(f"[更新] 准备更新 [{plugin_name}], 更新等级为{level}")
 
-    # 先执行git fetch
+    # 先执行 git fetch
     logger.info(f"[更新][{plugin_name}] 正在执行 git fetch")
-
-    try:
-        o.fetch()
-    except GitCommandError as e:
-        logger.warning(f"[更新] 执行 git fetch 失败...{e}!")
+    success, message = await git_fetch(repo_path)
+    if not success:
+        logger.warning(f"[更新] 执行 git fetch 失败...{message}!")
+        if "timeout" in message.lower() or "凭证" in message:
+            return [
+                f"⏭️ 跳过更新插件 {plugin_name}",
+                "⚠️ git fetch 失败，可能需要 git 凭证，请检查仓库配置",
+            ]
         return [
             f"更新插件 {plugin_name} 中...",
             "执行 git fetch 失败, 请检查控制台...",
         ]
 
-    try:
-        default_branch = repo.git.branch("--show-current")
+    # 获取当前分支
+    default_branch = await git_get_current_branch(repo_path)
 
-        commits_diff = list(repo.iter_commits(f"HEAD..origin/{default_branch}"))
-    except GitCommandError as e:
-        logger.warning(f"[更新] 查找默认分支失败...{e}!")
-        commits_diff = list(repo.iter_commits(max_count=40))
+    # 获取更新前的 commit log 用于差异比较
+    commits_diff = await git_diff_commits(
+        repo_path,
+        "HEAD",
+        f"origin/{default_branch}",
+        max_count=40,
+    )
 
+    # level >= 2: 强行强制更新 - clean -xdf
     if level >= 2:
         logger.warning(f"[更新][{plugin_name}] 正在执行 git clean --xdf")
         logger.warning("[更新] 你有 2 秒钟的时间中断该操作...")
         if plugin_name == "早柚核心":
             return ["更新失败, 禁止强行强制更新核心..."]
-        time.sleep(2)
-        repo.git.clean("-xdf")
-    # 还原上次更改
+        await asyncio.sleep(2)
+        await git_clean_xdf(repo_path)
+
+    # level >= 1: 强制更新 - reset --hard
     if level >= 1:
         logger.warning(f"[更新][{plugin_name}] 正在执行 git reset --hard")
-        repo.git.reset("--hard")
+        await git_reset_hard(repo_path)
 
-    try:
-        pull_log = o.pull()
-        logger.info(f"[更新][{plugin_name}] {pull_log}")
-        logger.info(f"[更新][{repo.head.commit.hexsha[:7]}] 获取远程最新版本")
-    except GitCommandError as e:
-        logger.warning(f"[更新] 更新失败...{e}!")
+    # 执行 git pull
+    success, pull_message = await git_pull(repo_path)
+    if not success:
+        logger.warning(f"[更新] 更新失败...{pull_message}!")
+        if "timeout" in pull_message.lower() or "凭证" in pull_message:
+            return [
+                f"⏭️ 跳过更新插件 {plugin_name}",
+                "⚠️ git pull 失败，可能需要 git 凭证，请检查仓库配置",
+            ]
         return [f"更新插件 {plugin_name} 中...", "更新失败, 请检查控制台..."]
 
-    # commits = list(repo.iter_commits(max_count=40))
+    logger.info(f"[更新][{plugin_name}] {pull_message}")
+
+    # 构建更新日志
+    log_list: List[str] = []
     if commits_diff:
-        commits = commits_diff
-    else:
-        commits = []
-    log_list = []
-    if commits:
         log_list.append(f"✅本次插件 {plugin_name} , 更新内容如下：")
-        for commit in commits:
-            if isinstance(commit.message, str):
-                if log_key:
-                    for key in log_key:
-                        if key in commit.message:
-                            log_list.append(commit.message.replace("\n", ""))
-                            if len(log_list) >= log_limit:
-                                break
-                else:
-                    log_list.append(commit.message.replace("\n", ""))
-                    if len(log_list) >= log_limit:
-                        break
+        for commit_msg in commits_diff:
+            if log_key:
+                for key in log_key:
+                    if key in commit_msg:
+                        log_list.append(commit_msg)
+                        if len(log_list) >= log_limit:
+                            break
+            else:
+                log_list.append(commit_msg)
+                if len(log_list) >= log_limit:
+                    break
     else:
         log_list.append(f"✅插件 {plugin_name} 本次无更新内容！")
+
     if plugin_name != "早柚核心" and is_reload:
         reload_plugin(plugin_name)
     return log_list
@@ -553,7 +508,7 @@ async def update_plugins(
             plugin_name = _n.name
             break
 
-    log_list = await update_from_git_in_tread(
+    log_list = await update_from_git_async(
         level,
         plugin_name,
         log_key,
