@@ -14,6 +14,5 @@ async def sget(url: str):
 
 
 async def download_pic_to_image(url: str) -> Image.Image:
-    logger.info(f"[Sget] 开始下载图片: {url}")
     resp = await sget(url)
     return Image.open(BytesIO(resp.content))

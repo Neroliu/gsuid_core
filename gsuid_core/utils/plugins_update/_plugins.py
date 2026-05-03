@@ -28,6 +28,138 @@ from .reload_plugin import reload_plugin
 
 plugins_list: Dict[str, Dict[str, str]] = {}
 
+
+def _parse_git_error(message: str, plugin_name: str, operation: str = "pull") -> List[str]:
+    """
+    解析 git 错误信息，返回用户友好的提示和解决方案。
+
+    Args:
+        message: git 命令返回的原始错误信息
+        plugin_name: 插件名称
+        operation: 操作类型，"pull" 或 "fetch"
+
+    Returns:
+        包含错误描述和解决方案的字符串列表
+    """
+    msg_lower = message.lower()
+    prefix = f"更新插件 {plugin_name} 失败"
+
+    # 合并冲突
+    if any(kw in msg_lower for kw in ["conflict", "merge", "automatic merge failed", "cannot be resolved"]):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：本地代码与远程代码存在合并冲突",
+            "💡 解决：使用「强制更新」或「强行强制更新」覆盖本地修改",
+        ]
+
+    # 本地有未提交的修改
+    if any(
+        kw in msg_lower
+        for kw in [
+            "your local changes to the following files would be overwritten",
+            "please commit your changes or stash them",
+            "entry '.*' not uptodate",
+            "dirty",
+        ]
+    ):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：本地存在未提交的修改，无法自动合并",
+            "💡 解决：使用「强制更新」丢弃本地修改，或手动 stash 后重试",
+        ]
+
+    # 分支分叉
+    if any(kw in msg_lower for kw in ["diverged", "need to specify how to reconcile", "refusing to merge unrelated"]):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：本地与远程分支历史分叉，无法自动合并",
+            "💡 解决：使用「强制更新」重置到远程版本",
+        ]
+
+    # 网络错误
+    if any(
+        kw in msg_lower
+        for kw in [
+            "could not resolve host",
+            "connection refused",
+            "network is unreachable",
+            "connection timed out",
+            "failed to connect",
+            "couldn't connect to server",
+        ]
+    ):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：网络连接失败，无法访问远程仓库",
+            "💡 解决：检查网络连接，或配置 Git 镜像源加速访问",
+        ]
+
+    # SSL / 证书错误
+    if any(kw in msg_lower for kw in ["ssl", "certificate", "cert"]):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：SSL 证书验证失败",
+            "💡 解决：检查系统时间是否正确，或尝试更新 CA 证书",
+        ]
+
+    # 远程仓库不存在 / URL 错误
+    if any(
+        kw in msg_lower
+        for kw in [
+            "repository not found",
+            "does not appear to be a git repository",
+            "not found",
+            "404",
+        ]
+    ):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：远程仓库地址无效或仓库已被删除",
+            "💡 解决：检查插件仓库地址是否正确，可能需要重新安装插件",
+        ]
+
+    # 认证 / 权限错误
+    if any(
+        kw in msg_lower
+        for kw in [
+            "permission denied",
+            "authentication failed",
+            "403",
+            "401",
+            "credential",
+            "fatal: could not read",
+            "username",
+        ]
+    ):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：仓库认证失败，可能是私有仓库需要登录凭证",
+            "💡 解决：检查 Git 凭证配置，或确认仓库访问权限",
+        ]
+
+    # 超时
+    if "timeout" in msg_lower:
+        return [
+            f"⏭️ 跳过更新插件 {plugin_name}",
+            "⚠️ git 操作超时，可能需要 git 凭证或网络不稳定",
+        ]
+
+    # 磁盘空间不足
+    if any(kw in msg_lower for kw in ["no space left", "disk full", "not enough space"]):
+        return [
+            f"❌ {prefix}",
+            "📋 原因：磁盘空间不足",
+            "💡 解决：清理磁盘空间后重试",
+        ]
+
+    # 通用兜底
+    return [
+        f"❌ {prefix}",
+        f"📋 原因：{message[:100]}",
+        "💡 解决：尝试「强制更新」，若仍失败请检查控制台日志",
+    ]
+
+
 is_install_dep = core_plugins_config.get_config("AutoInstallDep").data
 is_reload: bool = core_plugins_config.get_config("AutoReloadPlugins").data
 
@@ -411,15 +543,7 @@ async def update_from_git_async(
     success, message = await git_fetch(repo_path)
     if not success:
         logger.warning(f"[更新] 执行 git fetch 失败...{message}!")
-        if "timeout" in message.lower() or "凭证" in message:
-            return [
-                f"⏭️ 跳过更新插件 {plugin_name}",
-                "⚠️ git fetch 失败，可能需要 git 凭证，请检查仓库配置",
-            ]
-        return [
-            f"更新插件 {plugin_name} 中...",
-            "执行 git fetch 失败, 请检查控制台...",
-        ]
+        return _parse_git_error(message, plugin_name, operation="fetch")
 
     # 获取当前分支
     default_branch = await git_get_current_branch(repo_path)
@@ -450,12 +574,7 @@ async def update_from_git_async(
     success, pull_message = await git_pull(repo_path)
     if not success:
         logger.warning(f"[更新] 更新失败...{pull_message}!")
-        if "timeout" in pull_message.lower() or "凭证" in pull_message:
-            return [
-                f"⏭️ 跳过更新插件 {plugin_name}",
-                "⚠️ git pull 失败，可能需要 git 凭证，请检查仓库配置",
-            ]
-        return [f"更新插件 {plugin_name} 中...", "更新失败, 请检查控制台..."]
+        return _parse_git_error(pull_message, plugin_name, operation="pull")
 
     logger.info(f"[更新][{plugin_name}] {pull_message}")
 

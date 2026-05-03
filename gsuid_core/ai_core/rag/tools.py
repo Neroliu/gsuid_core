@@ -132,9 +132,14 @@ async def sync_tools(tools_map: Dict[str, ToolBase]) -> None:
 
 
 def get_main_agent_tools() -> ToolList:
+    """获取主Agent基础工具集（仅 self + buildin 分类，始终加载）
+
+    by_trigger 分类的工具不再无条件加载，而是通过 search_tools() 向量检索按需加载，
+    避免插件数量膨胀导致工具列表过大（100+ 工具）浪费 Token 并降低 LLM 选工具准确率。
+    """
     all_tools_cag = get_registered_tools()
     all_tools = {}
-    for cat in ["self", "buildin", "by_trigger"]:
+    for cat in ["self", "buildin"]:
         if cat in all_tools_cag:
             all_tools.update(all_tools_cag[cat])
 
@@ -194,8 +199,8 @@ async def search_tools(
         if non_category:
             if isinstance(non_category, str):
                 non_category = [non_category]
-            for cat in non_category:
-                if cat in all_tools_cag:
+            for cat in all_tools_cag:
+                if cat in non_category:
                     continue
                 all_tools.update(all_tools_cag[cat])
         else:

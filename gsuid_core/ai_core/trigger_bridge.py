@@ -2,9 +2,9 @@
 
 提供以下能力：
 1. `ai_return()` — 在触发器函数内向 AI 返回纯文本中间结果
-2. `MockBot` — AI 调用时拦截 bot.send，将文本内容收集返回给 AI；图片暂存到 extra，由 AI 决定是否发送
+2. `MockBot` — AI 调用时拦截 bot.send，将文本内容收集返回给 AI；图片通过 RM 注册并返回资源 ID
 3. `_register_trigger_as_ai_tool()` — 将触发器函数包装为 AI 工具并注册到 _TOOL_REGISTRY
-4. `send_trigger_images` — 配套工具，由 AI 决定是否将拦截到的图片真正发送给用户
+4. `send_trigger_images` — 配套工具（buildin 分类，始终加载），AI 通过资源 ID 发送图片给用户
 """
 
 import re
@@ -21,6 +21,7 @@ from gsuid_core.logger import logger
 from gsuid_core.models import Message
 from gsuid_core.ai_core.models import ToolContext
 from gsuid_core.ai_core.register import _TOOL_REGISTRY, ToolBase, _get_plugin_name_from_module
+from gsuid_core.utils.resource_manager import RM
 
 # ─── ContextVar ───────────────────────────────────────────────────────────────
 # AI 调用时为 dict（收集 send 内容），普通用户调用时为 None
@@ -86,21 +87,25 @@ class MockBot:
         message: Union[Message, List[Message], str, bytes, List[str]],
         at_sender: bool = False,
     ) -> None:
-        """拦截 send：文本存入上下文返回给 AI，图片暂存不发送。"""
+        """拦截 send：文本存入上下文返回给 AI，图片通过 RM 注册并返回资源 ID。"""
         ctx = object.__getattribute__(self, "_ctx")
         if isinstance(message, bytes):
-            # bytes 通常是图片数据，暂存到 images 列表，不传给 AI
-            ctx["images"].append(message)
+            # bytes 通常是图片数据，注册到 RM 并记录资源 ID
+            resource_id = RM.register(message)
+            ctx["image_ids"].append(resource_id)
         elif isinstance(message, str):
             if _is_image_string(message):
-                # base64://... 或 data:image/... 字符串，当作图片处理
-                ctx["images"].append(message)
+                # base64://... 或 data:image/... 字符串，注册到 RM 并记录资源 ID
+                resource_id = RM.register(message)
+                ctx["image_ids"].append(resource_id)
             else:
                 ctx["bot_messages"].append(message)
         else:
-            # Message / List[Message] — 检查是否包含图片段
-            if _message_contains_image(message):
-                ctx["images"].append(message)
+            # Message / List[Message] — 提取图片数据注册到 RM
+            image_data = _extract_image_data(message)
+            if image_data is not None:
+                resource_id = RM.register(image_data)
+                ctx["image_ids"].append(resource_id)
             else:
                 # 纯文字 Message，转为字符串存入返回值
                 ctx["bot_messages"].append(_message_to_text(message))
@@ -112,6 +117,30 @@ class MockBot:
     ) -> None:
         """拦截 reply，行为与 send 相同。"""
         await self.send(message, at_sender)
+
+    async def send_option(
+        self,
+        reply: Any = None,
+        option_list: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        """拦截 send_option：只处理 reply 中的图片/文字，忽略按钮。"""
+        if reply is not None:
+            await self.send(reply)
+
+    async def receive_resp(
+        self,
+        reply: Any = None,
+        option_list: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        """拦截 receive_resp：只处理 reply 中的图片/文字，返回 None 表示无用户响应。
+
+        AI 调用触发器时不支持交互式等待用户输入，因此始终返回 None。
+        """
+        if reply is not None:
+            await self.send(reply)
+        return None
 
     def __getattr__(self, name: str) -> Any:
         """代理所有其他属性到真实 Bot。"""
@@ -129,17 +158,31 @@ def _is_image_string(s: str) -> bool:
     )
 
 
+def _extract_image_data(message: Any) -> Union[str, bytes, None]:
+    """从消息对象中提取图片数据，用于 RM.register()。返回 None 表示非图片消息。"""
+    if isinstance(message, bytes):
+        return message
+    if isinstance(message, str):
+        if _is_image_string(message):
+            return message
+        return None
+    if isinstance(message, Message):
+        if message.type == "image" and message.data is not None:
+            data = message.data
+            if isinstance(data, (str, bytes)):
+                return data
+        return None
+    if isinstance(message, (list, tuple)):
+        for m in message:
+            result = _extract_image_data(m)
+            if result is not None:
+                return result
+    return None
+
+
 def _message_contains_image(message: Any) -> bool:
     """检查消息对象是否包含图片段（image segment）。"""
-    if isinstance(message, bytes):
-        return True
-    if isinstance(message, str):
-        return _is_image_string(message)
-    if isinstance(message, Message):
-        return message.type == "image"
-    if isinstance(message, (list, tuple)):
-        return any(_message_contains_image(m) for m in message)
-    return False
+    return _extract_image_data(message) is not None
 
 
 def _message_to_text(message: Any) -> str:
@@ -199,6 +242,19 @@ def _register_trigger_as_ai_tool(
         assert real_bot is not None, "触发器 AI 工具调用时 bot 不能为 None"
         assert ev is not None, "触发器 AI 工具调用时 ev 不能为 None"
 
+        # 权限检查：AI 调用时也需要遵守与用户直接触发相同的权限限制
+        # user_pm: 0=master, 1=superuser, 2=群主/管理员, 3=普通用户
+        # pm: 要求的最低权限等级，数值越小权限越高
+        # 注意：运行时读取 sv/plugins 的当前状态，而非注册时快照
+        if not sv.plugins.enabled:
+            return "❌ 该插件已禁用。"
+        if not sv.enabled:
+            return "❌ 该功能已禁用。"
+        if ev.user_pm > sv.plugins.pm:
+            return f"❌ 权限不足：该插件需要权限等级 {sv.plugins.pm}，当前用户权限等级为 {ev.user_pm}。"
+        if ev.user_pm > sv.pm:
+            return f"❌ 权限不足：该功能需要权限等级 {sv.pm}，当前用户权限等级为 {ev.user_pm}。"
+
         # 模拟 ev：深拷贝 event 后修改 text 和 command
         fake_ev = deepcopy(ev)
         fake_ev.text = text
@@ -221,7 +277,7 @@ def _register_trigger_as_ai_tool(
         # 准备收集上下文
         call_ctx: Dict[str, Any] = {
             "texts": [],  # ai_return() 写入的文字
-            "images": [],  # bot.send(bytes/Message(image)) 拦截到的图片（不传给 AI）
+            "image_ids": [],  # bot.send 拦截到的图片，通过 RM 注册后的资源 ID
             "bot_messages": [],  # bot.send(str/Message(text)) 拦截到的文字
         }
 
@@ -233,20 +289,17 @@ def _register_trigger_as_ai_tool(
         finally:
             _AI_CALL_CONTEXT.reset(token)
 
-        # 将图片暂存到 ToolContext.extra，供 send_trigger_images 工具取用
-        if call_ctx["images"]:
-            ctx.deps.extra["pending_trigger_images"] = call_ctx["images"]
-
-        # 组装返回值（只包含纯文本，图片数据绝不进入返回值）
+        # 组装返回值（只包含纯文本 + 资源 ID，图片数据绝不进入返回值）
         parts: List[str] = []
         parts.extend(call_ctx["texts"])
         parts.extend(call_ctx["bot_messages"])
 
-        if call_ctx["images"]:
-            image_count = len(call_ctx["images"])
+        if call_ctx["image_ids"]:
+            image_count = len(call_ctx["image_ids"])
+            id_list = ", ".join(call_ctx["image_ids"])
             parts.append(
-                f"[已生成 {image_count} 张图片。"
-                f"请调用 send_trigger_images 工具将图片发送给用户，"
+                f"[已生成 {image_count} 张图片，资源ID: {id_list}。"
+                f"请调用 send_trigger_images 工具传入资源ID将图片发送给用户，"
                 f"或根据用户意图决定是否发送。]"
             )
 
@@ -310,25 +363,26 @@ def _register_trigger_as_ai_tool(
 # ─── send_trigger_images 工具 ─────────────────────────────────────────────────
 
 
-async def _send_trigger_images(ctx: RunContext[ToolContext]) -> str:
+async def _send_trigger_images(ctx: RunContext[ToolContext], resource_id: str) -> str:
     """
-    将本次触发器工具调用中生成的图片发送给用户。
+    通过资源ID将图片发送给用户。
 
-    当触发器工具返回值中提到"已生成图片"时，AI 可调用此工具来真正发送图片。
-    如果 AI 判断图片不适合发送（如用户只是询问数据），可以不调用此工具。
+    当触发器工具返回值中包含资源ID时，AI 可调用此工具来发送图片。
+    资源ID格式为 "img_xxxxxxxx"，由触发器工具自动生成。
+
+    Args:
+        resource_id: 图片资源ID，例如 "img_a1b2c3d4"
     """
-    images = ctx.deps.extra.get("pending_trigger_images")
-    if not images:
-        return "没有待发送的图片。"
-
     real_bot = ctx.deps.bot
     assert real_bot is not None, "发送图片时 bot 不能为 None"
 
-    for img in images:
-        await real_bot.send(img)
+    try:
+        img_data = await RM.get(resource_id)
+    except ValueError:
+        return f"❌ 找不到资源ID: {resource_id}，可能已过期或ID不正确。"
 
-    ctx.deps.extra.pop("pending_trigger_images", None)
-    return f"✅ 已发送 {len(images)} 张图片给用户。"
+    await real_bot.send(img_data)
+    return f"✅ 已发送图片 (资源ID: {resource_id}) 给用户。"
 
 
 # 手动设置元数据
@@ -336,12 +390,14 @@ _send_trigger_images.__name__ = "send_trigger_images"
 _send_trigger_images.__qualname__ = "send_trigger_images"
 _send_trigger_images.__module__ = __name__
 _send_trigger_images.__doc__ = (
-    "将本次触发器工具调用中生成的图片发送给用户。"
-    "当触发器工具返回值中提到'已生成图片'时，调用此工具来真正发送。"
+    "通过资源ID将图片发送给用户。"
+    "当触发器工具返回值中包含资源ID（如 img_xxxxxxxx）时，"
+    "调用此工具传入资源ID来发送图片。"
     "如果 AI 判断图片不适合发送，可以不调用此工具。"
 )
 _send_trigger_images.__annotations__ = {
     "ctx": RunContext[ToolContext],
+    "resource_id": str,
     "return": str,
 }
 _send_trigger_images.__signature__ = inspect.Signature(
@@ -351,11 +407,16 @@ _send_trigger_images.__signature__ = inspect.Signature(
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             annotation=RunContext[ToolContext],
         ),
+        inspect.Parameter(
+            "resource_id",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=str,
+        ),
     ],
     return_annotation=str,
 )
 
-# 注册 send_trigger_images 工具
+# 注册 send_trigger_images 工具到 buildin 分类（始终加载）
 _tool_obj = Tool(_send_trigger_images, takes_ctx=True)
 _tool_base = ToolBase(
     name="send_trigger_images",
@@ -363,6 +424,6 @@ _tool_base = ToolBase(
     plugin="core",
     tool=_tool_obj,
 )
-if "by_trigger" not in _TOOL_REGISTRY:
-    _TOOL_REGISTRY["by_trigger"] = {}
-_TOOL_REGISTRY["by_trigger"]["send_trigger_images"] = _tool_base
+if "buildin" not in _TOOL_REGISTRY:
+    _TOOL_REGISTRY["buildin"] = {}
+_TOOL_REGISTRY["buildin"]["send_trigger_images"] = _tool_base

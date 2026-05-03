@@ -34,7 +34,8 @@ async def send_stock_img(bot: Bot, ev: Event):
 # 改造后
 @sv.on_command(
     "个股",
-    to_ai="""查询指定股票或ETF的K线图或分时图。
+    to_ai="""查询股票/ETF的K线图或分时图
+
     当用户询问某只股票走势、分时图、K线图时调用。
 
     Args:
@@ -50,7 +51,7 @@ async def send_stock_img(bot: Bot, ev: Event):
 
 **`to_ai` 的本质**：这段字符串就是 AI 看到的工具 docstring。AI 依据它判断"什么时候调这个工具"以及"text 参数应该填什么"。
 
-### 2.2 `ai_return(text)` 的作用
+### 2.2 `ai_return(text)` 的作用与使用时机
 
 ```python
 from gsuid_core.ai_core.trigger_bridge import ai_return
@@ -59,52 +60,179 @@ from gsuid_core.ai_core.trigger_bridge import ai_return
 - **AI 调用时**：调用 `ai_return("某些文字")` 会将文字收集起来，作为工具的返回值传回给 AI
 - **用户直接触发时**：`ai_return()` 什么都不做，完全透明，不影响原有逻辑
 
-**关键原则**：`ai_return()` 应该在**数据已经拿到、图片还没生成时**调用，传递的是结构化的文本数据摘要，让 AI 能够"读懂"这次查询的结果，从而决定如何向用户描述。
+> **⚠️ 关键警告：AI 不会自动写 `ai_return`！**
+>
+> 实践中发现，AI（包括高级模型）在改造触发器时，**不会自动**在多层函数调用中添加 `ai_return()` 调用。AI 倾向于只在触发器函数本身做简单处理，而不会深入分析调用链去找到正确的数据注入点。
+>
+> **你必须手动完成以下工作**：
+> 1. 逐层追踪触发器的完整调用链
+> 2. 找到"数据已获取、图片未生成"的那个精确位置
+> 3. 分析该位置的数据结构，提取关键字段
+> 4. 编写 `_ai_return_xxx()` 辅助函数并注入
+>
+> **不要期望 AI 能自动完成这些分析，必须由你显式地在 SKILL 指令中引导 AI 做到。**
+
+**`ai_return()` 的正确使用场景**：
+
+| 场景 | 是否需要 `ai_return()` | 说明 |
+|------|----------------------|------|
+| `bot.send(str)` 纯文字 | ❌ 不需要 | MockBot 自动拦截，文字会被收集返回给 AI |
+| `bot.send(bytes)` 图片字节 | ⚠️ 视情况 | 图片通过 `RM.register()` 注册，返回资源 ID。需要文字摘要时用 `ai_return()` |
+| `bot.send(MessageSegment.image(...))` | ⚠️ 视情况 | 同上，`MessageSegment.image()` 返回 `Message(type="image")`，通过 `RM.register()` 注册 |
+| `bot.send("base64://...")` 图片字符串 | ⚠️ 视情况 | 以 `base64://`、`http://`、`https://` 开头的字符串被识别为图片，通过 `RM.register()` 注册 |
+| `bot.send([text_msg, image_msg])` 混合列表 | ⚠️ 注意 | 列表中**只要包含图片段**，整个列表被归为图片，文字部分**不会**返回给 AI |
+| `return "string"` 不经过 bot.send | ✅ 需要 | 必须用 `ai_return()` 将结果注入给 AI |
+
+**核心原则**：`ai_return()` 应该在**数据已经拿到、图片还没生成时**调用，传递的是结构化的文本数据摘要，让 AI 能够"读懂"这次查询的结果，从而决定如何向用户描述。
+
+**典型模式**：
+```python
+# 模式1：纯文字返回 → 不需要 ai_return
+await bot.send("绑定成功！UID: 123456")  # MockBot 自动拦截
+
+# 模式2：返回图片，需要文字摘要 → 用 ai_return
+ai_return("【证券ETF 分时行情】最新价: 1.234 涨跌幅: +2.5%")  # 给 AI 文字摘要
+await bot.send(image_bytes)  # 图片通过 RM.register() 注册，返回资源 ID，AI 决定是否发送
+
+# 模式3：直接 return → 需要 ai_return
+ai_return("查询结果：今日运势 85 分")
+return "运势结果已生成"
+```
 
 ### 2.3 `MockBot` 拦截机制（自动处理，开发者无需干预）
 
 当 AI 调用触发器时：
 - `bot` 对象被自动替换为 `MockBot`
-- `bot.send(bytes)` / `bot.send(Message(type="image"))` → 图片暂存到上下文，不传给 AI 也不发送给用户
-- `bot.send(str)` / `bot.send(纯文字 Message)` → 文字被收集，作为工具返回值传回给 AI
-- AI 收到工具返回值（含文本描述"已生成 N 张图片"）后，决定是否调用 `send_trigger_images` 发出图片
+- `bot.send(bytes)` → 图片字节数据，通过 `RM.register()` 注册，返回资源 ID（如 `img_a1b2c3d4`）
+- `bot.send(MessageSegment.image(...))` → 返回的 `Message(type="image")` 被检测为图片，通过 `RM.register()` 注册
+- `bot.send("base64://...")` / `bot.send("https://...")` → 以这些前缀开头的字符串被识别为图片，通过 `RM.register()` 注册
+- `bot.send(str)` 纯文字 → 文字被收集，作为工具返回值传回给 AI
+- `bot.send([text_msg, image_msg])` 混合列表 → **只要包含图片段，整个列表归为图片**，文字部分不返回给 AI
+- AI 收到工具返回值（含资源 ID）后，决定是否调用 `send_trigger_images(resource_id)` 发出图片
+- 资源 ID 在 RM 中持久存储，AI 可在后续轮次中再次发送
 - 用户直接触发时，`bot` 是真实 `Bot`，`bot.send` 立即发送，行为不变
+
+**图片发送的常见形式**（开发者需要了解）：
+
+| 传入类型 | 示例 | MockBot 处理 |
+|---------|------|-------------|
+| `bytes` | `await bot.send(image_bytes)` | ✅ `RM.register()` 注册，返回资源 ID |
+| `MessageSegment.image()` | `await bot.send(MessageSegment.image(img))` | ✅ 返回 `Message(type="image")`，`RM.register()` 注册 |
+| `Image.Image` 对象 | 通常先 `convert_img()` 转为 bytes 再 send | ✅ 转换后为 bytes，`RM.register()` 注册 |
+| `base64://` 字符串 | `await bot.send("base64://iVBOR...")` | ✅ 检测为图片字符串，`RM.register()` 注册 |
+| `http(s)://` URL | `await bot.send("https://example.com/img.png")` | ✅ 检测为图片 URL，`RM.register()` 注册 |
+| 纯文字字符串 | `await bot.send("查询成功")` | ✅ 检测为文字，返回给 AI |
+| `[text, image]` 混合列表 | `await bot.send([MessageSegment.text("结果"), MessageSegment.image(img)])` | ⚠️ 整体归为图片，`RM.register()` 注册，文字丢失 |
+
+**⚠️ 混合列表的注意事项**：当 `bot.send()` 传入的列表中同时包含文字和图片 Message 时，MockBot 会将整个列表归类为图片。这意味着列表中的文字部分**不会**被返回给 AI。如果需要让 AI 同时获得文字信息，应在 `bot.send()` 之前单独调用 `ai_return()` 注入文字摘要。
 
 ---
 
 ## 三、改造流程
 
+### Step 0：批量定位与前期准备
+
+对于有大量触发器的项目（如 50+ 个触发器），建议采用批量处理策略：
+
+**0.1 批量定位所有触发器**
+
+```bash
+# 使用 search_files 批量找出所有触发器装饰器
+# 搜索模式：@sv.on_xxx 或 @sv_xxx.on_xxx
+```
+
+用 `search_files` 工具搜索 `\.on_(command|prefix|suffix|keyword|fullmatch|regex|file|message)\(` 模式，一次性获取所有触发器的位置和上下文。
+
+**0.2 按模块分批处理**
+
+将触发器按文件/模块分组，逐模块处理而非逐个触发器处理。每个模块的改造步骤：
+1. 识别该模块所有触发器
+2. 检查是否有重复的手动 AI 工具（见 Step 0.3）
+3. 确认命令前缀格式（见 Step 0.4）
+4. 批量添加 `to_ai` 参数
+5. 批量注入 `ai_return()`
+
+**0.3 检查已有的手动 AI 工具**
+
+在改造前，**必须检查**目标插件中是否存在已手动注册的 `@ai_tools` 函数。这些手动工具与 `to_ai` 触发器功能可能重复，添加 `to_ai` 后会导致 AI 看到两个功能相同的工具。
+
+检查方法：
+```bash
+# 搜索插件目录中是否有 @ai_tools 装饰器
+# 搜索模式：@ai_tools
+```
+
+如果发现手动 AI 工具与触发器功能重复：
+- **移除**手动 `@ai_tools` 函数（或注释掉）
+- 保留 `to_ai` 触发器版本（因为它同时支持用户直接调用和 AI 调用）
+- 如果手动工具提供了触发器不具备的额外功能，则保留两者但确保描述不重复
+
+**0.4 确认命令前缀格式**
+
+不同插件使用不同的命令前缀。在撰写 `to_ai` 描述前，**必须确认**插件的实际前缀配置：
+
+```python
+from gsuid_core.sv import get_plugin_prefixs, get_plugin_prefix, get_plugin_available_prefix
+
+# 获取插件的所有前缀
+prefixes = get_plugin_prefixs("插件名")  # 例如 ["gs", ""]
+
+# 获取插件的主前缀
+prefix = get_plugin_prefix("插件名")  # 例如 "gs"
+
+# 获取插件的可用前缀（考虑 force_prefix 和 allow_empty_prefix）
+available = get_plugin_available_prefix("插件名")
+```
+
+**重要**：`to_ai` 描述中的命令示例应使用**实际的前缀格式**，而非假设的格式。例如：
+- 如果插件前缀是 `"gs"`，命令示例应写 `"gs绑定uid"` 而非 `"/绑定uid"`
+- 如果插件前缀是 `""`（空前缀），命令示例直接写命令名即可
+
 ### Step 1：阅读插件代码，识别所有触发器
 
-找出所有 `@sv.on_command/on_prefix/on_fullmatch/on_keyword/on_suffix/on_regex` 装饰器，列出：
+找出所有 `@sv.on_command/on_prefix/on_fullmatch/on_keyword/on_suffix/on_regex/on_file/on_message` 装饰器，列出：
 - 命令名称（keyword）
-- 触发器类型（command/fullmatch/prefix...）
+- 触发器类型（command/fullmatch/prefix/suffix/keyword/regex/file/message）
 - 函数名
 - 函数的实际功能（查什么数据、返回什么）
 - 函数从 `ev.text` 里读取的参数格式
 
 ### Step 2：为每个触发器撰写 `to_ai` docstring
 
-`to_ai` docstring 必须包含：
+#### 2.1 `to_ai` 描述编写指南
 
+**结构模板**：
 ```
-<一句话功能描述>
-<用户在什么场景下会触发这个功能（自然语言描述）>
+<一句话功能描述，不加句号，18字以内，需标明所属游戏/功能模块>
+
+<适用场景：AI 何时应该调用此工具，覆盖用户的多种说法>
 
 Args:
-    text: <text 参数的完整格式说明，包括：>
-          - <基础格式>
-          - <可选前缀/后缀>
-          - <多个值的分隔方式>
-          - <具体例子>
-          <如果是 on_fullmatch 且无参数，写"无需参数，留空即可">
+    text: <参数格式说明，包括格式、示例、注意事项>
 ```
 
 **撰写要点**：
-- 第一句话要让 AI 在自然对话中准确识别意图，要覆盖用户的多种说法
-- `text` 的格式说明必须详细到 AI 能直接按说明构建参数，不能有歧义
-- 如果命令有多个 keyword（tuple），在描述中提及所有同义叫法
-- 不需要描述错误处理逻辑，那是触发器函数自己的事
+
+1. **功能描述**（第一行）：简洁直白，18字以内，不加句号，必须标明所属游戏或功能模块
+   - 第一行与第二行（适用场景）之间**必须有空行**
+   - ✅ "查询原神角色详情和培养数据"
+   - ✅ "查看A股大盘板块涨跌云图"
+   - ✅ "查询股票/ETF的K线图或分时图"
+   - ❌ "查询原神游戏中指定角色的详细信息和培养数据。"（超18字、有句号）
+   - ❌ "这个功能可以帮用户查看股票信息"（不够简洁直白）
+
+2. **适用场景**：描述 AI 在什么自然语言意图下应调用此工具
+   - 覆盖用户的多种说法和表达方式
+   - ✅ "当用户询问某只股票走势、分时图、K线图时调用"
+   - ✅ "当用户说'帮我看看XX'、'XX怎么样'、'XX的行情'时调用"
+
+3. **Args 部分**：
+   - 说明参数的完整格式，包括可选前缀、分隔方式
+   - 提供具体示例（至少 2-3 个）
+   - 对于不需要参数的触发器（如 `on_fullmatch`），写"无需参数，留空即可"
+   - 如果参数有多种格式，用列表逐项说明
+
+4. **长度控制**：建议 5~15 行。太短 AI 无法正确构建参数，太长浪费 Token
 
 **不同插件类型的描述风格**：
 
@@ -116,22 +244,127 @@ Args:
 | 绑定/设置 | "当用户要绑定账号/UID/游戏ID时调用" |
 | 无参数功能 | "...无需参数，留空即可" |
 
-### Step 3：找出数据层，注入 `ai_return()`
+#### 2.2 不同装饰器类型的 `to_ai` 写法
 
-这是改造中**最需要思考**的步骤。
+GsCore 支持以下 8 种触发器装饰器，它们的 `to_ai` 写法有细微差异：
+
+| 装饰器 | 匹配方式 | `text` 参数含义 | `to_ai` 写法要点 |
+|--------|---------|----------------|-----------------|
+| `on_command` | 前缀匹配命令名 | 命令后面的内容 | 描述命令后的参数格式 |
+| `on_prefix` | 前缀匹配关键字 | 关键字后面的内容 | 同 `on_command`，描述关键字后的参数 |
+| `on_fullmatch` | 完整匹配 | 无参数（`text` 为空） | 写"无需参数，留空即可" |
+| `on_keyword` | 包含关键字 | 整条消息（含关键字） | 描述整条消息的格式 |
+| `on_suffix` | 后缀匹配 | 关键字前面的内容 | 描述关键字前的参数格式 |
+| `on_regex` | 正则匹配 | 整条消息 | 描述消息格式，说明正则捕获的模式 |
+| `on_file` | 文件类型匹配 | 无 `text` 参数 | 通常不加 `to_ai`（AI 无法构建文件输入） |
+| `on_message` | 消息匹配 | 整条消息 | 通常不加 `to_ai`（过于通用） |
+
+**`on_prefix` 示例**：
+```python
+@sv.on_prefix(
+    "查角色",
+    to_ai="""查询原神角色详细信息
+
+    当用户说"查角色 雷电将军"、"查角色 胡桃"时调用。
+
+    Args:
+        text: 角色名称，例如 "雷电将军"、"胡桃"、"纳西妲"
+              支持角色昵称，例如 "雷神"、"影"、"小草神"
+    """,
+)
+async def get_char_info(bot: Bot, ev: Event):
+    char_name = ev.text.strip()  # "查角色" 后面的内容
+    ...
+```
+
+**`on_suffix` 示例**：
+```python
+@sv.on_suffix(
+    "怎么样",
+    to_ai="""查询事物的评价或状态
+
+    当用户说"XX怎么样"、"XX好不好"时调用。
+
+    Args:
+        text: 查询对象名称（"怎么样"前面的部分），例如 "雷电将军"、"这把武器"
+    """,
+)
+async def query_evaluation(bot: Bot, ev: Event):
+    subject = ev.text.replace("怎么样", "").strip()  # "怎么样" 前面的内容
+    ...
+```
+
+**`on_keyword` 示例**：
+```python
+@sv.on_keyword(
+    ("运势", "运气"),
+    to_ai="""查看用户今日运势
+
+    当用户消息中包含"运势"或"运气"时调用，例如"今天运势如何"、"我的运气怎么样"。
+    无需额外参数，根据用户 ID 和日期自动生成。
+
+    Args:
+        text: 无需参数，留空即可
+    """,
+)
+async def get_fortune(bot: Bot, ev: Event):
+    ...
+```
+
+**`on_regex` 示例**：
+```python
+@sv.on_regex(
+    r"(\d{9,10})的(uid|UID)",
+    to_ai="""查询UID对应的用户信息
+
+    当用户消息匹配"123456789的uid"这种格式时调用。
+
+    Args:
+        text: 包含 UID 的消息，格式为 "数字uid" 或 "数字UID"，例如 "123456789的uid"
+    """,
+)
+async def query_uid(bot: Bot, ev: Event):
+    uid = ev.regex_dict.get("uid")  # 从正则捕获组获取
+    ...
+```
+
+### Step 3：逐层分析调用链，找出数据层，注入 `ai_return()`
+
+这是改造中**最需要思考、也最容易被 AI 忽略**的步骤。
+
+> **⚠️ 核心警告：必须逐层分析，不能只看触发器函数！**
+>
+> 实践中发现，AI 倾向于只分析触发器标注的函数本身，而**不会自动去追踪触发器内部调用的其他函数**。但实际的数据获取和渲染逻辑往往在更深层的函数调用中。
+>
+> **你必须做到**：
+> 1. 从触发器函数出发，**逐层向下追踪**所有被调用的函数
+> 2. 找到**真正拿到原始数据**的那一层（可能在第 2、3、4 层调用中）
+> 3. 分析该层数据的**完整结构**，确定哪些字段是渲染图片所用的数据
+> 4. 在数据获取之后、图片渲染之前，注入 `ai_return()`
 
 **原则**：找到函数链中"已经拿到原始数据、但还没开始生成图片/发送消息"的那个位置，在那里提取关键信息并调用 `ai_return()`。
 
-**寻找注入点的方法**：
+**逐层追踪的方法**：
 
-1. 从触发器函数出发，追踪 `render_image()` / `get_data()` 等调用
-2. 找到实际获取数据的 `get_xxx()` 函数调用之后、`render_image_by_pw()` / `fig.write_html()` 等生成图片之前的位置
-3. 通常这个位置在渲染层的某个 `render_xxx()` 函数内部
+```
+触发器函数 send_xxx(bot, ev)
+    └── 调用 render_image(...) 或 get_data(...) 等
+        └── 调用 fetch_api(...) 或 get_xxx_data(...) 等
+            └── 调用 parse_response(...) 或 build_chart_data(...) 等
+                └── 这里才是真正拿到原始数据的地方！
+```
+
+**寻找注入点的步骤**：
+
+1. **第一步**：从触发器函数出发，看它调用了什么函数（如 `render_image()`、`get_data()`）
+2. **第二步**：进入被调用的函数，继续追踪，找到实际获取数据的 `get_xxx()` / `fetch_xxx()` 函数
+3. **第三步**：确认数据获取后，找到图片生成的位置（`render_image_by_pw()` / `fig.write_html()` / `to_fig()` 等）
+4. **第四步**：在数据获取之后、图片生成之前的位置注入 `ai_return()`
 
 **注入位置选择**：
 
 ```python
-# ✅ 正确：在渲染前注入
+# ✅ 正确：在渲染前注入（数据层函数内部）
 async def render_html(market, sector, ...):
     raw_data = await get_xxx(...)   # 数据已拿到
 
@@ -146,6 +379,37 @@ async def render_html(market, sector, ...):
 async def send_xxx(bot, ev):
     im = await render_image(...)    # 数据和渲染都在里面，触发器层看不到原始数据
     await bot.send(im)
+```
+
+**⚠️ 图片场景的关键要求：分析渲染数据来源**
+
+当触发器最终返回的是图片时，**必须分析图片是用什么数据渲染的**：
+
+1. 找到图片渲染函数（如 `to_fig()`、`build_chart()`、`render_image_by_pw()` 等）
+2. 分析该函数接收的参数是什么数据结构
+3. 从这些数据中提取关键字段（名称、数值、状态等）
+4. 将提取的字段格式化为纯文本，通过 `ai_return()` 返回给 AI
+
+**示例：追踪多层调用找到注入点**
+
+```python
+# 触发器函数（第 1 层）
+@sv.on_command(("个股"))
+async def send_stock_img(bot: Bot, ev: Event):
+    im = await render_stock(ev.text)  # 调用 render_stock
+    await bot.send(im)
+
+# 渲染函数（第 2 层）
+async def render_stock(code: str):
+    data = await fetch_stock_data(code)  # 调用 fetch_stock_data
+    _ai_return_stock(data)               # ← 注入点在这里！
+    fig = build_stock_chart(data)        # 用 data 渲染图片
+    return fig_to_bytes(fig)
+
+# 数据获取函数（第 3 层）
+async def fetch_stock_data(code: str) -> dict:
+    # 实际的 API 调用
+    return {"name": "证券ETF", "price": 1.234, "change": 2.5, ...}
 ```
 
 **不同数据类型的提取思路**：
@@ -229,7 +493,8 @@ sv = SV("大盘云图")
 
 @sv.on_command(
     ("大盘云图"),
-    to_ai="""查看A股大盘行业板块涨跌分布云图（热力图）。
+    to_ai="""查看A股大盘板块涨跌云图
+
     当用户询问大盘行情、今日市场整体表现、行业板块涨跌分布、大盘热力图时调用。
 
     Args:
@@ -244,7 +509,8 @@ async def send_cloudmap_img(bot: Bot, ev: Event):
 
 @sv.on_fullmatch(
     ("我的个股"),
-    to_ai="""查看用户自选股列表的当日分时行情图。
+    to_ai="""查看自选股当日分时行情
+
     当用户询问"我的股票"、"自选股今天怎么样"、"帮我看看我的持仓"时调用。
     无需参数，自动读取当前用户的自选股列表。
 
@@ -267,7 +533,8 @@ async def send_my_stock_img(bot: Bot, ev: Event):
 
 @sv.on_command(
     ("个股"),
-    to_ai='''查询指定股票或ETF的K线图或分时图。
+    to_ai='''查询股票/ETF的K线图或分时图
+
     当用户询问某只股票/ETF今天走势、分时图、日K、周K、月K时调用。
     支持同时查询多只股票。
 
@@ -427,7 +694,8 @@ def _ai_return_cloudmap(raw_data, market: str, sector=None):
 # 触发器层
 @sv_genshin.on_command(
     ("查角色", "角色信息"),
-    to_ai="""查询原神游戏中指定角色的详细信息和培养数据。
+    to_ai="""查询原神角色详情和培养数据
+
     当用户询问某个角色的命座、圣遗物、天赋等培养情况时调用。
     需要用户已绑定原神 UID。
 
@@ -473,12 +741,13 @@ def _ai_return_char(char_data: dict, char_name: str):
 
 ### 5.2 无返回数据的写操作（绑定/设置类）
 
-绑定、设置等命令**不需要 `ai_return`**，但触发器本身发送的文字会被 MockBot 收集并返回给 AI：
+绑定、设置等命令**不需要 `ai_return`**，因为 `bot.send(str)` 的文字会被 MockBot 自动拦截返回给 AI：
 
 ```python
 @sv.on_command(
     ("绑定", "bind"),
-    to_ai="""绑定用户的游戏 UID 到账号。
+    to_ai="""绑定游戏UID到账号
+
     当用户说"帮我绑定UID"、"我的uid是xxx"、"bind xxx"时调用。
 
     Args:
@@ -491,7 +760,8 @@ async def bind_uid(bot: Bot, ev: Event):
         return await bot.send("UID 格式不正确，请输入纯数字")
     await GameDB.bind_uid(ev.user_id, uid)
     await bot.send(f"✅ 已成功绑定 UID: {uid}")
-    # bot.send 的文字会被 MockBot 收集，AI 会知道"绑定成功"
+    # bot.send 的文字会被 MockBot 自动收集，AI 会知道"绑定成功"
+    # 不需要额外调用 ai_return()
 ```
 
 ### 5.3 娱乐/随机类功能
@@ -499,7 +769,8 @@ async def bind_uid(bot: Bot, ev: Event):
 ```python
 @sv_fun.on_fullmatch(
     ("今日运势", "运势"),
-    to_ai="""查看用户今日运势/幸运指数。
+    to_ai="""查看用户今日运势
+
     当用户想看今天运势、问今天是否适合做某事时调用。
     无需参数，根据用户 ID 和日期生成唯一结果。
 
@@ -544,11 +815,13 @@ def _ai_return_fortune(result: dict):
 
 | 情况 | 原因 |
 |------|------|
-| 管理员/超级用户专用命令 | AI 不应绕过权限控制 |
+| 管理员/超级用户专用命令 | 虽然系统会自动检查 `pm` 权限（低权限用户调用会返回"权限不足"），但 AI 对大多数用户都会收到权限错误，浪费 token |
 | 系统维护命令（重载、清缓存等） | 危险操作，不开放给 AI |
-| 需要多轮交互/Response 会话的命令 | 当前机制不支持多轮 |
+| 需要多轮交互/Response 会话的命令 | `receive_resp` 在 AI 上下文中返回 `None`，交互流程会中断 |
 | 纯文件上传/接收型命令（`on_file`） | AI 无法构建文件输入 |
 | 功能过于单一且 AI 无法获得有效信息的命令 | 改造价值低 |
+
+> **权限保障**：即使开发者错误地给高权限命令添加了 `to_ai`，系统也会在运行时检查 `plugins.pm` 和 `sv.pm`，低权限用户通过 AI 调用时会收到 "❌ 权限不足" 错误。配置通过 webconsole 修改后实时生效。
 
 ---
 
@@ -556,12 +829,28 @@ def _ai_return_fortune(result: dict):
 
 改造完成后，逐项确认：
 
+**前期准备：**
+- [ ] 已用 `search_files` 批量定位所有触发器
+- [ ] 已检查并移除与触发器功能重复的手动 `@ai_tools` 函数
+- [ ] 已用 `get_plugin_prefixs()` 确认插件的实际命令前缀格式
+
 **触发器层：**
 - [ ] 所有应改造的 `on_xxx` 装饰器都已加 `to_ai` 参数
 - [ ] `to_ai` 字符串的第一句话能让 AI 准确识别触发意图
 - [ ] `text` 参数格式说明清晰，有具体例子
 - [ ] `on_fullmatch` 无参数型已注明"无需参数，留空即可"
+- [ ] `on_suffix` 的 `text` 参数描述的是关键字**前面**的内容
+- [ ] `on_keyword` 的 `text` 参数描述的是**整条消息**
+- [ ] `on_regex` 的 `text` 参数描述了正则匹配的消息格式
 - [ ] 多 keyword 的 tuple 形式语法正确：`("命令1", "命令2")`
+- [ ] `to_ai` 描述中的命令示例使用了正确的前缀格式
+
+**调用链逐层分析（⚠️ 最容易遗漏的部分）：**
+- [ ] **已逐层追踪**触发器函数内部调用的所有子函数，而非只看触发器本身
+- [ ] **已找到真正获取原始数据的函数**（可能在第 2、3、4 层调用中）
+- [ ] **已确认数据结构**：知道原始数据的字段名、类型、含义
+- [ ] **已找到图片渲染函数**：确认图片是用哪些数据字段渲染的
+- [ ] **注入点在正确的层级**：在数据获取之后、图片生成之前，而非在触发器函数内
 
 **数据层：**
 - [ ] 已 `from gsuid_core.ai_core.trigger_bridge import ai_return`
@@ -570,6 +859,9 @@ def _ai_return_fortune(result: dict):
 - [ ] 辅助函数用 `try/except` 包裹，错误只 `logger.warning`
 - [ ] `ai_return` 的文本内容包含足够的关键信息（数字、名称等）
 - [ ] 错误分支（如数据为空）也有 `ai_return("错误：...")`
+- [ ] 纯文字 `bot.send(str)` 场景没有重复调用 `ai_return()`
+- [ ] 混合列表 `bot.send([text, image])` 场景已用 `ai_return()` 单独注入文字摘要
+- [ ] **图片场景**：已分析图片渲染所用的数据来源，提取了关键字段作为文本摘要
 
 **不破坏性检查：**
 - [ ] 原触发器函数体**完全未修改**
@@ -584,16 +876,54 @@ def _ai_return_fortune(result: dict):
 A：建议 5~15 行。太短 AI 无法正确构建参数，太长浪费 Token。核心是把 `text` 参数格式说清楚。
 
 **Q：触发器函数本身有前置检查（如用户未绑定 UID），AI 调用时怎么处理？**
-A：不用特殊处理。`bot.send("请先绑定UID")` 会被 MockBot 收集，作为工具返回值的一部分告知 AI，AI 会告诉用户"需要先绑定"。
+A：不用特殊处理。`bot.send("请先绑定UID")` 会被 MockBot 自动收集，作为工具返回值的一部分告知 AI，AI 会告诉用户"需要先绑定"。
 
 **Q：某个触发器内部有多条 `await bot.send()`，这些都会被拦截吗？**
-A：是的，MockBot 会拦截所有 `bot.send()`。但通常只有最后一条发图，中间的文字 send 也会被收集，AI 可以看到。
+A：是的，MockBot 会拦截所有 `bot.send()`。纯文字的 `bot.send(str)` 会被自动收集返回给 AI，不需要额外调用 `ai_return()`。通常只有最后一条发图，中间的文字 send 也会被收集，AI 可以看到。
 
 **Q：渲染层在另一个文件，我找不到合适的注入点怎么办？**
 A：向上追踪调用链，找到 `raw_data = await get_xxx()` 之后的位置即可。如果渲染函数不经过这个流程（比如直接从缓存返回），可以在缓存命中分支之前加。
 
 **Q：`on_prefix` 和 `on_command` 有什么区别，`to_ai` 的写法有不同吗？**
-A：`on_prefix` 匹配以 keyword 开头的消息；`on_command` 通常也是前缀匹配但语义是命令。`to_ai` 写法相同，`text` 参数描述的都是命令后面的内容。
+A：`on_prefix` 匹配以 keyword 开头的消息；`on_command` 通常也是前缀匹配但语义是命令。`to_ai` 写法相同，`text` 参数描述的都是命令后面的内容。`on_suffix` 则相反，`text` 描述的是关键字前面的内容。
 
 **Q：多个触发器共享同一个渲染函数，我只注入一次就够了吗？**
 A：是的。只要渲染函数内部按不同分支调用了不同的 `_ai_return_xxx()`，每条触发器路径都会被覆盖。
+
+**Q：插件已经有手动注册的 `@ai_tools` 工具，加了 `to_ai` 后会冲突吗？**
+A：会。两者都会注册为 AI 工具，导致功能重复。应该移除手动的 `@ai_tools` 函数，保留 `to_ai` 触发器版本（因为它同时支持用户直接调用和 AI 调用）。
+
+**Q：如何确认插件的命令前缀？**
+A：使用 `get_plugin_prefixs("插件名")` 获取所有前缀列表，或 `get_plugin_prefix("插件名")` 获取主前缀。`to_ai` 描述中的命令示例应使用实际前缀，而非假设的格式（如 `/命令`）。
+
+**Q：`bot.send(str)` 的文字真的会被自动返回给 AI 吗？我还需要调用 `ai_return()` 吗？**
+A：是的，`MockBot` 会自动拦截 `bot.send(str)` 并将文字收集到返回值中。对于纯文字场景，**不需要**额外调用 `ai_return()`。只有在需要返回图片的文字摘要（`bot.send(bytes)` 场景）或不经过 `bot.send` 直接 return 的场景才需要 `ai_return()`。
+
+**Q：为什么必须逐层分析调用链，只看触发器函数不行吗？**
+A：不行。实践中发现，触发器函数通常只是调用其他函数来获取数据和渲染图片，真正的数据获取逻辑在更深层的函数中。如果只看触发器函数，你无法知道：
+1. 数据是从哪个 API 获取的
+2. 数据的具体结构是什么
+3. 图片是用哪些字段渲染的
+4. 应该在哪个位置注入 `ai_return()`
+
+**必须逐层追踪**：从触发器函数开始，进入它调用的每个函数，直到找到真正获取原始数据的地方。
+
+**Q：图片场景如何分析渲染数据来源？**
+A：当触发器返回图片时，必须：
+1. 找到图片渲染函数（如 `to_fig()`、`build_chart()`、`render_image_by_pw()` 等）
+2. 分析该函数接收的参数是什么数据结构
+3. 从这些数据中提取关键字段（名称、数值、状态等）
+4. 将提取的字段格式化为纯文本，通过 `ai_return()` 返回给 AI
+
+**示例**：如果渲染函数是 `build_stock_chart(data)`，你需要查看 `data` 包含哪些字段（如 `name`、`price`、`change`），然后提取这些字段作为文本摘要。
+
+**Q：AI 会自动帮我写 `ai_return()` 吗？**
+A：**不会**。实践中发现，AI（包括高级模型）在改造触发器时，**不会自动**在多层函数调用中添加 `ai_return()` 调用。AI 倾向于只在触发器函数本身做简单处理，而不会深入分析调用链去找到正确的数据注入点。
+
+**你必须手动完成以下工作**：
+1. 逐层追踪触发器的完整调用链
+2. 找到"数据已获取、图片未生成"的那个精确位置
+3. 分析该位置的数据结构，提取关键字段
+4. 编写 `_ai_return_xxx()` 辅助函数并注入
+
+**不要期望 AI 能自动完成这些分析，必须由你显式地在 SKILL 指令中引导 AI 做到。**

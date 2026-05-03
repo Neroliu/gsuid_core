@@ -24,7 +24,7 @@ GsCore WebConsole 提供基于 FastAPI 的 RESTful API，供前端 React 应用�
 
 1. [认证 API - /api/auth](./01-auth.md)
 2. [系统 API - /api/system](./02-system.md)
-3. [插件 API - /api/plugins](./03-plugins.md)
+3. [插件 API - /api/plugins](./03-plugins.md)（含插件 ICON 图片接口）
 4. [核心配置 API - /api/core](./04-core-config.md)
 5. [数据库 API - /api/database](./05-database.md)
 6. [备份 API - /api/backup](./06-backup.md)

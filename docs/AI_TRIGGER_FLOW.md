@@ -882,12 +882,12 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 |------|------|----------|------|
 | `self` | 仅为自身服务的能力 | 主Agent专属，始终加载 | 好感度管理、发送消息、创建子Agent |
 | `buildin` | 默认内置工具 | 主Agent始终加载 | 知识库检索、Web搜索、查询记忆 |
-| `by_trigger` | 触发器桥接工具 | 主Agent始终加载 | 插件触发器通过 `to_ai` 自动注册的 AI 工具 |
-| `common` | 通常工具 | 按需加载，用户明确需要时 | 定时任务管理、获取自身信息 |
+| `by_trigger` | 触发器桥接工具 | 按需加载，通过向量检索匹配 | 插件触发器通过 `to_ai` 自动注册的 AI 工具 |
+| `common` | 通常工具 | 按需加载，通过向量检索匹配 | 定时任务管理、获取自身信息 |
 | `default` | 子Agent工具 | 由子Agent使用 | 文件操作、日期获取、系统命令 |
 | `mcp` | MCP 外部工具 | 启动时自动注册，按需加载 | 用户自定义的 MCP 服务器工具 |
 
-**加载优先级**: `self` > `buildin` > `by_trigger` > `common`
+**加载优先级**: `self` > `buildin` > `by_trigger` / `common`（按需向量检索）
 
 #### 5.5.4 渐进式加载架构图
 
@@ -910,15 +910,12 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 │  └─────────────────────────────────────────────────────┘   │
 │                                                           │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │ by_trigger 工具 (始终加载)                            │   │
+│  │ by_trigger + common 工具 (按需向量检索)               │   │
 │  │ - 插件触发器通过 to_ai 自动注册的 AI 工具             │   │
 │  │ - send_trigger_images (发送拦截到的图片)              │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                           │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ common 工具 (按需加载)                                │   │
 │  │ - 定时任务管理 (add/list/query/modify/cancel...)    │   │
 │  │ - 获取自身Persona信息                                │   │
+│  │ - 通过 search_tools() 向量检索按需加载               │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                          │                                │
 │                          │ create_subagent() 调用         │
@@ -939,10 +936,9 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 系统中的工具加载分为两个独立的上下文：
 
 **主Agent (Main Agent)**
-- 使用 `get_main_agent_tools()` 获取基础工具集
-- 加载 `self`、`buildin` 和 `by_trigger` 分类的所有工具（始终加载）
-- 通过 `search_tools(non_category=["self", "buildin"])` 按需加载 `common` 分类工具
-- **不会调用 `default` 分类的工具**
+- 使用 `get_main_agent_tools()` 获取基础工具集（仅 `self` + `buildin` 分类，始终加载）
+- 通过 `search_tools(non_category=["self", "buildin", "default"])` 按需加载 `by_trigger`、`common`、`mcp` 分类工具（向量检索，受 limit 数量限制）
+- **不会调用 `default` 分类的工具**（子Agent专用）
 
 **子Agent (Sub Agent)**
 - 由 `create_subagent()` 创建
@@ -993,41 +989,59 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 
 #### 5.5.9 触发器桥接工具 (`category="by_trigger"`)
 
-由插件触发器通过 `to_ai` 参数自动注册的 AI 工具，主Agent始终加载。
+由插件触发器通过 `to_ai` 参数自动注册的 AI 工具，通过 `search_tools()` 向量检索按需加载（受 limit 数量限制），不再无条件全部加载。
 
 **文件位置**: [`gsuid_core/ai_core/trigger_bridge.py`](gsuid_core/ai_core/trigger_bridge.py)
 
 | 工具 | 说明 |
 |------|------|
-| `send_trigger_images` | 将触发器工具调用中拦截到的图片发送给用户 |
 | `<触发器函数名>` | 插件通过 `@sv.on_command(..., to_ai="...")` 自动注册的工具 |
+
+> **注意**：`send_trigger_images` 已移至 `buildin` 分类（始终加载），不再属于 `by_trigger`。
 
 **工作原理**：
 
 1. 插件开发者在 `@sv.on_command()` 等装饰器上声明 `to_ai` 参数（非空字符串作为 AI 工具的 docstring）
 2. 插件加载时，`_on()` 方法自动调用 `_register_trigger_as_ai_tool()` 将触发器函数包装为 AI 工具
-3. AI 调用时，包装函数使用 `MockBot` 代理 `bot.send()`：
-   - **图片/资源 (bytes, Message(type="image"))**: 暂存到上下文，不传给 AI 也不发送给用户
+3. AI 调用时，包装函数先执行**权限检查**（与用户直接触发一致）：
+   - `plugins.enabled` / `sv.enabled` — 插件/SV 是否启用
+   - `user_pm <= plugins.pm` / `user_pm <= sv.pm` — 权限等级检查
+   - 权限不足时返回错误文本给 AI，配置通过 webconsole 修改后实时生效
+4. 权限通过后，使用 `MockBot` 代理 `bot.send()`：
+   - **图片/资源 (bytes, Message(type="image"), base64://字符串)**: 通过 `RM.register()` 注册，返回资源 ID（如 `img_a1b2c3d4`）
    - **纯文本 (str, Message(type="text"))**: 被收集，作为工具返回值传回给 AI
-4. 触发器函数内可通过 `ai_return()` 向 AI 返回纯文本中间结果
-5. AI 拿到工具返回值（纯文本摘要 + "已生成 N 张图片"描述），决定是否调用 `send_trigger_images` 将图片真正发送给用户
+   - **`send_option(reply, buttons)`**: reply 走 `send()` 拦截，buttons 忽略
+   - **`receive_resp(reply, ...)`**: reply 走 `send()` 拦截，返回 `None`（AI 不支持交互式等待）
+5. 触发器函数内可通过 `ai_return()` 向 AI 返回纯文本中间结果
+6. AI 拿到工具返回值（纯文本摘要 + 资源 ID），决定是否调用 `send_trigger_images(resource_id)` 将图片发送给用户
 
 **交互流程**：
 
 ```
-用户直接触发：
-  用户 → 触发器匹配 → handler(real_bot, ev) → bot.send(im) → 直接发图 ✅
+用户直接触发（pm=2 的 SV，pm=3 的用户）：
+  用户 → handler 检查 user_pm(3) <= sv.pm(2) → False → 触发器不匹配 → 落入 AI 流程
 
-AI 调用（AI 决定发图）：
+AI 调用（权限不足）：
   AI → 调用触发器工具(text="证券ETF")
-    → MockBot 拦截 send(im)，图片暂存到 extra
-    → 工具返回 "查询完成\n[已生成 1 张图片。请调用 send_trigger_images 工具将图片发送给用户]"
-  AI → 调用 send_trigger_images() → real_bot.send(im) → 图片发出 ✅
+    → 权限检查: ev.user_pm(3) > sv.pm(2) → True
+    → 返回 "❌ 权限不足：该功能需要权限等级 2，当前用户权限等级为 3。"
+  AI → 向用户解释权限不足 ✅
 
-AI 调用（AI 决定不发图）：
+AI 调用（权限通过，AI 决定发图）：
   AI → 调用触发器工具(text="证券ETF")
-    → 工具返回含图片标记
-  AI → 判断用户只要数据 → 不调用 send_trigger_images → 图片丢弃 ✅
+    → 权限检查通过
+    → MockBot 拦截 send(im) → RM.register(im) → 资源 ID: img_a1b2c3d4
+    → 工具返回 "查询完成\n[已生成 1 张图片，资源ID: img_a1b2c3d4。请调用 send_trigger_images 工具传入资源ID将图片发送给用户]"
+  AI → 调用 send_trigger_images(resource_id="img_a1b2c3d4") → RM.get() → real_bot.send() → 图片发出 ✅
+
+AI 调用（权限通过，AI 决定不发图）：
+  AI → 调用触发器工具(text="证券ETF")
+    → 工具返回含资源 ID
+  AI → 判断用户只要数据 → 不调用 send_trigger_images → 图片保留在 RM 中 ✅
+
+用户后续请求图片：
+  用户 → "我想看看图"
+  AI → 从历史对话中找到资源 ID → 调用 send_trigger_images(resource_id="img_a1b2c3d4") → 图片发出 ✅
 ```
 
 #### 5.5.10 子Agent工具 (`category="default"`)
@@ -1154,10 +1168,14 @@ AI 决策调用 MCP 工具
 
 ```python
 def get_main_agent_tools() -> ToolList:
-    """获取主Agent专用工具（self + buildin + by_trigger 分类）"""
+    """获取主Agent基础工具集（仅 self + buildin 分类，始终加载）
+
+    by_trigger 分类的工具不再无条件加载，而是通过 search_tools() 向量检索按需加载，
+    避免插件数量膨胀导致工具列表过大（100+ 工具）浪费 Token 并降低 LLM 选工具准确率。
+    """
     all_tools_cag = get_registered_tools()
     all_tools = {}
-    for cat in ["self", "buildin", "by_trigger"]:
+    for cat in ["self", "buildin"]:
         if cat in all_tools_cag:
             all_tools.update(all_tools_cag[cat])
     return [all_tools[tool].tool for tool in all_tools]

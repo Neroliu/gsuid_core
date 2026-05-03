@@ -206,3 +206,45 @@ GET /api/plugins/market
 ```
 GET /api/plugins/{plugin_name}/update
 ```
+
+---
+
+## 3.12 获取插件 ICON 图片
+```
+GET /api/plugins/icon/{plugin_name}
+```
+
+**说明**：直接返回插件的 ICON.png 图片文件（非 base64），适用于前端 `<img>` 标签直接引用。插件名称会自动去除首尾下划线后再进行查找。
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `plugin_name` | string | ✅ | 插件名称，首尾下划线会被自动去除（如 `_GsCore_` → `GsCore`） |
+
+**成功响应**：
+- HTTP Status: `200`
+- Content-Type: `image/png`
+- Body: PNG 图片二进制数据
+
+**失败响应**：
+```json
+{
+    "status": -1,
+    "msg": "插件 'xxx' 的 ICON 不存在"
+}
+```
+
+**前端调用示例**：
+```html
+<!-- 直接在 img 标签中使用 -->
+<img src="/api/plugins/icon/GsCore" alt="插件图标" />
+
+<!-- JavaScript 中动态构建 URL -->
+<script>
+const pluginName = "_GsCore_";
+const iconUrl = `/api/plugins/icon/${encodeURIComponent(pluginName)}`;
+</script>
+```
+
+> **与 `/api/plugins/list` 的区别**：`/api/plugins/list` 返回的 `icon` 字段是 base64 编码的 Data URI 字符串，适合内联使用；而 `/api/plugins/icon/{name}` 直接返回图片文件，适合通过 URL 引用，可利用浏览器缓存，性能更优。

@@ -522,32 +522,47 @@ AI 调用触发器时，包装函数使用 `MockBot` 代理真实 Bot：
 
 | 方法 | 行为 |
 |------|------|
-| `send(str)` | 存入 `bot_messages` 列表，作为工具返回值传回给 AI |
-| `send(bytes)` | 暂存到 `images` 列表，不传给 AI 也不发送给用户 |
-| `send(Message(type="image"))` | 暂存到 `images` 列表 |
+| `send(str)` | 纯文字存入 `bot_messages`；`base64://`/`http://` 等图片字符串通过 `RM.register()` 注册，返回资源 ID |
+| `send(bytes)` | 通过 `RM.register()` 注册，返回资源 ID |
+| `send(Message(type="image"))` | 提取图片数据通过 `RM.register()` 注册，返回资源 ID |
 | `reply()` | 同 `send()` |
+| `send_option(reply, buttons)` | reply 走 `send()` 拦截，buttons 忽略 |
+| `receive_resp(reply, ...)` | reply 走 `send()` 拦截，返回 `None`（AI 不支持交互式等待） |
 | 其他属性 | 代理到真实 Bot（如 `bot_self_id`） |
+
+### 4.4.1 权限检查
+
+AI 调用触发器工具时，会执行与用户直接触发相同的权限检查：
+
+- `plugins.enabled` — 插件是否启用
+- `sv.enabled` — SV 是否启用
+- `user_pm <= plugins.pm` — 插件级权限
+- `user_pm <= sv.pm` — SV 级权限
+
+权限不足时返回错误文本给 AI，AI 据此向用户解释。配置通过 webconsole 修改后实时生效（运行时读取，非注册时快照）。
 
 ### 4.5 `send_trigger_images` 工具
 
-配套工具，由 AI 决定是否将拦截到的图片真正发送给用户：
+配套工具（`buildin` 分类，始终加载），AI 通过资源 ID 将图片发送给用户：
 
 ```python
 # AI 工具返回值示例：
-# "[已生成 1 张图片。请调用 send_trigger_images 工具将图片发送给用户，或根据用户意图决定是否发送。]"
+# "[已生成 1 张图片，资源ID: img_a1b2c3d4。请调用 send_trigger_images 工具传入资源ID将图片发送给用户]"
 ```
 
 AI 可以：
-- 调用 `send_trigger_images()` → 图片真正发出
-- 不调用 → 图片丢弃（用户只收到 AI 的文字回复）
+- 调用 `send_trigger_images(resource_id="img_a1b2c3d4")` → 通过 `RM.get()` 取回图片并发送
+- 不调用 → 图片保留在 RM 中（用户只收到 AI 的文字回复）
+
+资源 ID 通过 `RM.register()` 生成，格式为 `img_xxxxxxxx`，在 RM 中持久存储，支持跨轮次使用。
 
 ### 4.6 交互流程对比
 
 | 场景 | bot 对象 | bot.send 行为 |
 |------|---------|--------------|
 | 用户直接触发 | 真实 Bot | 立即发送给用户 |
-| AI 调用，AI 决定发 | MockBot | 暂存 → `send_trigger_images` → 真正发出 |
-| AI 调用，AI 决定不发 | MockBot | 暂存 → AI 不调 `send_trigger_images` → 图片丢弃 |
+| AI 调用，AI 决定发 | MockBot | `RM.register()` → 返回资源 ID → AI 调用 `send_trigger_images(id)` → 发出 |
+| AI 调用，AI 决定不发 | MockBot | `RM.register()` → 返回资源 ID → AI 不调用 → 图片保留在 RM 中 |
 
 ### 4.7 注册时序
 
