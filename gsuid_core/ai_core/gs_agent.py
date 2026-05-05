@@ -13,6 +13,7 @@ from pydantic_graph import End
 from pydantic_ai.agent import CallToolsNode, ModelRequestNode
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
+    ImageUrl,
     TextPart,
     UserContent,
     ModelMessage,
@@ -154,7 +155,7 @@ class GsCoreAIAgent:
         self._run_lock = asyncio.Lock()
         self.max_tokens = max_tokens
         self.max_iterations = max_iterations  # 自定义迭代次数限制，None时使用配置默认值
-        self.task_level = task_level  # 任务级别，用于选择对应的模型配置
+        self.task_level: Literal["high", "low"] = task_level  # 任务级别，用于选择对应的模型配置
 
         self.create_by = create_by
 
@@ -172,6 +173,67 @@ class GsCoreAIAgent:
                 self.max_history,
             )
             logger.debug(f"🧠 [GsCoreAIAgent] 历史记录已截断至 {len(self.history)} 条")
+
+    async def _prepare_user_message(
+        self,
+        content_list: list[UserContent],
+    ) -> Union[str, list[UserContent]]:
+        """处理用户消息中的图片内容
+
+        当 user_message 为 Sequence[UserContent] 时，检查其中是否包含 ImageUrl。
+        如果包含，根据当前模型的 model_support 配置决定：
+        - 模型支持图片：保留 ImageUrl，返回 list[UserContent]
+        - 模型不支持图片：调用 understand_image 将图片转述为文本，合并到文本消息中
+
+        Args:
+            content_list: 用户消息内容列表
+
+        Returns:
+            处理后的消息，可能是 str 或 list[UserContent]
+        """
+        from gsuid_core.ai_core.configs.models import get_model_config_for_task
+        from gsuid_core.ai_core.image_understand import understand_image
+
+        model_config = get_model_config_for_task(self.task_level)
+        model_support: str = model_config.get_config("model_support").data
+
+        # 分离文本和图片
+        text_parts: list[str] = []
+        image_urls: list[str] = []
+        for item in content_list:
+            if isinstance(item, ImageUrl):
+                image_urls.append(item.url)
+            elif isinstance(item, str):
+                text_parts.append(item)
+
+        if "image" in model_support:
+            # 模型支持图片，保留原始内容
+            result: list[UserContent] = []
+            for item in content_list:
+                if isinstance(item, str):
+                    result.append(f"【用户发言】\n{item}")
+                else:
+                    result.append(item)
+            return result
+
+        # 模型不支持图片，调用图片理解模块转述
+        if image_urls:
+            logger.info(f"🖼️ [ImageUnderstand] 当前模型不支持图片，开始图片理解转述，共 {len(image_urls)} 张图片")
+            descriptions: list[str] = []
+            for idx, url in enumerate(image_urls):
+                try:
+                    description = await understand_image(image_url=url)
+                    descriptions.append(f"图片{idx + 1}: {description}")
+                except Exception as e:
+                    logger.error(f"🖼️ [ImageUnderstand] 图片 {idx + 1} 理解失败: {e}")
+                    descriptions.append(f"图片{idx + 1}: [图片理解失败]")
+
+            if descriptions:
+                image_text = "--- 图片内容描述 ---\n" + "\n".join(descriptions)
+                text_parts.append(image_text)
+
+        combined = "\n".join(text_parts) if text_parts else ""
+        return f"【用户发言】\n{combined}"
 
     @overload
     async def _execute_run(
@@ -232,7 +294,11 @@ class GsCoreAIAgent:
         logger.info("🧠 [GsCoreAIAgent] ====== Agent 运行开始 ======")
         context = ToolContext(bot=bot, ev=ev)
 
-        final_user_message = f"【用户发言】\n{user_message}"
+        # 处理用户消息：当传入 Sequence[UserContent] 时，自动处理其中的图片
+        if isinstance(user_message, Sequence) and not isinstance(user_message, str):
+            final_user_message = await self._prepare_user_message(list(user_message))
+        else:
+            final_user_message = f"【用户发言】\n{user_message}"
 
         if rag_context:
             if isinstance(final_user_message, str):

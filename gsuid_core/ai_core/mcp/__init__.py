@@ -25,15 +25,27 @@ from gsuid_core.ai_core.mcp.startup import (
     register_all_mcp_tools,
     register_single_mcp_server,
 )
-from gsuid_core.ai_core.mcp.config_manager import MCPConfig, MCPConfigManager, mcp_config_manager
+from gsuid_core.ai_core.mcp.mcp_presets import MCP_PRESETS
+from gsuid_core.ai_core.mcp.config_manager import (
+    MCPConfig,
+    MCPConfigManager,
+    MCPToolDefinition,
+    parse_mcp_tool_id,
+    format_mcp_tool_id,
+    mcp_config_manager,
+)
 
 __all__ = [
     "MCPClient",
     "MCPToolInfo",
     "MCPToolResult",
     "MCPConfig",
+    "MCPToolDefinition",
     "MCPConfigManager",
+    "MCP_PRESETS",
     "mcp_config_manager",
+    "parse_mcp_tool_id",
+    "format_mcp_tool_id",
     "register_all_mcp_tools",
     "register_single_mcp_server",
     "unregister_mcp_server",

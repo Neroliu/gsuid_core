@@ -12,7 +12,6 @@ from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.segment import Message, MessageSegment
 from gsuid_core.utils.image.convert import convert_img
-from gsuid_core.ai_core.configs.models import get_model_config_for_task
 from gsuid_core.utils.resource_manager import RM
 
 
@@ -90,23 +89,43 @@ async def handle_tool_result(bot: Optional[Bot], result: Any, max_length: int = 
     return res_str
 
 
-def prepare_content_payload(
+def _normalize_image_url(raw: str) -> str:
+    """将各种图片格式统一转为可消费的 URL（HTTP 或 DataURI）
+
+    Args:
+        raw: 原始图片标识，支持 http/https URL、base64:// 前缀、data:image/ 前缀、裸 base64
+
+    Returns:
+        标准化的图片 URL
+    """
+    if raw.startswith(("http", "https")):
+        return raw
+    if raw.startswith("base64://"):
+        return f"data:image/png;base64,{raw[10:]}"
+    if raw.startswith("data:image/"):
+        return raw
+    return f"data:image/png;base64,{raw}"
+
+
+async def prepare_content_payload(
     ev: Event,
     task_level: Literal["high", "low"] = "high",
 ) -> Sequence[UserContent]:
     """
     准备消息内容列表给AI看, 包含文本、图片ID、文件内容、事件对象
 
+    图片处理由 GsCoreAIAgent._execute_run 自动完成：
+    - 模型支持图片时直接传图
+    - 模型不支持图片时通过 understand_image 转述为文字
+
     Args:
-        text: 文本内容
-        image_ids: 图片 ID 列表
-        files_content: 文件内容
         ev: 事件对象
+        task_level: 任务级别
 
     Returns:
-        content payload 列表
+        content payload 列表（可能包含 ImageUrl，由 _execute_run 自动处理）
     """
-    content_payload: Sequence[UserContent] = []
+    content_payload: list[UserContent] = []
     text = f"--- 当前用户ID: {getattr(ev, 'user_id', 'unknown')} ---\n"
 
     if not ev.text:
@@ -123,31 +142,14 @@ def prepare_content_payload(
 
     text += f"\n--- 当前群ID: {getattr(ev, 'group_id', 'unknown')} ---\n"
 
-    model_config = get_model_config_for_task(task_level)
-    model_support = model_config.get_config("model_support").data
+    content_payload.append(text)
 
-    # 处理用户文本消息
-    if "text" in model_support:
-        content_payload.append(text)
-
-    # 处理用户图片消息
-    if "image" in model_support:
-        for i in ev.image_list:
-            if isinstance(i, str):
-                if i.startswith(("http", "https")):
-                    img_url = i
-                else:
-                    # 转为DataURI
-                    if i.startswith("base64://"):
-                        img_url = f"data:image/png;base64,{i[10:]}"
-                    elif i.startswith("data:image/"):
-                        img_url = i
-                    else:
-                        img_url = f"data:image/png;base64,{i}"
-
-                content_payload.append(ImageUrl(url=img_url))
-            else:
-                logger.warning(f"无法处理图片ID: {i}")
+    # 处理用户图片消息（直接附加 ImageUrl，由 _execute_run 自动处理能力判断）
+    for i in ev.image_list:
+        if isinstance(i, str):
+            content_payload.append(ImageUrl(url=_normalize_image_url(i)))
+        else:
+            logger.warning(f"无法处理图片ID: {i}")
 
     return content_payload
 

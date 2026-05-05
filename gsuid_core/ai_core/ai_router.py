@@ -20,6 +20,7 @@ from gsuid_core.ai_core.history import get_history_manager
 from .persona import build_persona_prompt, persona_config_manager
 from .gs_agent import GsCoreAIAgent, create_agent
 from .resource import PERSONA_PATH
+from .persona.group_context import get_group_context
 
 # Persona 文件的 mtime 缓存，用于检测热重载
 _persona_mtime_cache: dict[str, float] = {}
@@ -106,7 +107,20 @@ async def _get_or_create_ai_session(
     if persona_name is None:
         raise ValueError(f"没有为 session {session_id} 配置 persona")
 
-    base_persona = await build_persona_prompt(persona_name)
+    # 获取群聊上下文（群聊适应性）
+    group_description = ""
+    if event.group_id:
+        group_description = await get_group_context(
+            group_id=event.group_id,
+        )
+
+    # 情绪隔离 key：群聊用 group_id，私聊用 user_id
+    mood_key = event.group_id if event.group_id else event.user_id
+    base_persona = await build_persona_prompt(
+        persona_name,
+        mood_key=mood_key,
+        group_description=group_description or None,
+    )
     _persona_mtime_cache[persona_name] = _get_persona_mtime(persona_name)
 
     session = create_agent(

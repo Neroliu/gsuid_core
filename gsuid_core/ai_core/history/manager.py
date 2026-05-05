@@ -7,10 +7,16 @@
 
 群聊场景：整个群共享历史记录（不区分用户）
 私聊场景：单独维护用户历史记录
+
+Token 上限控制：
+- 每个 session 维护一个滑动窗口 Token 总量上限（MAX_HISTORY_TOKENS）
+- 新消息加入时估算 Token 数，超限时从最旧消息开始逐条删除
+- Token 估算使用快速字符比例法（1 中文字符 ≈ 2 tokens，1 英文单词 ≈ 1.3 tokens）
 """
 
 from __future__ import annotations
 
+import re
 import time
 import asyncio
 
@@ -22,6 +28,35 @@ from collections import deque
 from dataclasses import field, dataclass
 
 from gsuid_core.models import Event
+
+
+def _estimate_tokens(text: str) -> int:
+    """快速估算文本的 Token 数量
+
+    使用字符比例法进行快速估算，不需要加载 tiktoken 库：
+    - 中文字符：约 2 tokens/字符
+    - 英文单词：约 1.3 tokens/单词
+    - 标点符号和数字：约 1 token/字符
+
+    Args:
+        text: 要估算的文本
+
+    Returns:
+        估算的 Token 数量
+    """
+    if not text:
+        return 0
+
+    # 统计中文字符数
+    chinese_chars = len(re.findall(r"[\u4e00-\u9fff\u3400-\u4dbf]", text))
+    # 统计英文单词数（连续的字母数字序列）
+    english_words = len(re.findall(r"[a-zA-Z]+", text))
+    # 其他字符（标点、数字、空格等）
+    other_chars = len(text) - chinese_chars - sum(len(w) for w in re.findall(r"[a-zA-Z]+", text))
+
+    # 估算：中文字符 * 2 + 英文单词 * 1.3 + 其他字符 * 0.5
+    estimated = int(chinese_chars * 2 + english_words * 1.3 + other_chars * 0.5)
+    return max(estimated, 1)  # 至少 1 token
 
 
 @dataclass
@@ -69,6 +104,10 @@ class HistoryManager:
 
     同时管理AI会话对象（GsCoreAIAgent）的生命周期。
 
+    Token 上限控制：
+    - 每个 session 维护一个滑动窗口 Token 总量上限（MAX_HISTORY_TOKENS）
+    - 新消息加入时估算 Token 数，超限时从最旧消息开始逐条删除
+
     线程安全，支持并发访问。
     """
 
@@ -76,6 +115,7 @@ class HistoryManager:
     CLEANUP_INTERVAL = 3600  # 清理检查间隔（秒）
     IDLE_THRESHOLD = 1800  # 空闲阈值（秒），默认30分钟
     MAX_AI_HISTORY_LENGTH = 30  # AI会话最大历史长度
+    MAX_HISTORY_TOKENS = 160000  # 每个 session 的 Token 总量上限
 
     def __init__(self, max_messages: int = DEFAULT_MAX_MESSAGES):
         """
@@ -91,6 +131,8 @@ class HistoryManager:
         self._session_metadata: Dict["Event", Dict[str, Any]] = {}
         # AI会话对象: {session_id: GsCoreAIAgent}
         self._ai_sessions: Dict[str, Any] = {}
+        # Token 计数: {Event: int} 每个 session 的当前 Token 总量
+        self._session_tokens: Dict["Event", int] = {}
         self._lock = Lock()
         # 清理任务
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -106,6 +148,9 @@ class HistoryManager:
     ) -> MessageRecord:
         """
         添加一条消息到历史记录
+
+        添加时自动估算 Token 数并维护滑动窗口 Token 上限。
+        当 Token 总量超限时，从最旧的消息开始逐条删除直到回到限制内。
 
         Args:
             event: Event 事件对象（包含 bot_id/group_id/user_id/user_type，WS_BOT_ID 用于发送）
@@ -125,6 +170,9 @@ class HistoryManager:
             metadata=metadata or {},
         )
 
+        # 估算新消息的 Token 数
+        new_tokens = _estimate_tokens(content)
+
         # 对于群聊，user_id 不参与 session 标识（session_id 中不包含 user_id）
         # 因此创建用于存储的 key 时，将群聊的 user_id 设为空字符串以保证一致性
         if event.user_type != "direct" and event.user_id:
@@ -140,8 +188,16 @@ class HistoryManager:
         with self._lock:
             if storage_event not in self._histories:
                 self._histories[storage_event] = deque(maxlen=self._max_messages)
+                self._session_tokens[storage_event] = 0
+
             history = self._histories[storage_event]
             history.append(record)
+
+            # 更新 Token 计数
+            self._session_tokens[storage_event] = self._session_tokens.get(storage_event, 0) + new_tokens
+
+            # Token 上限控制：超限时从最旧消息开始逐条删除
+            self._enforce_token_limit(storage_event)
 
             # 更新 session 元数据
             now = time.time()
@@ -160,6 +216,27 @@ class HistoryManager:
                 self._session_metadata[storage_event]["history_length"] = len(history)
 
         return record
+
+    def _enforce_token_limit(self, storage_event: "Event") -> None:
+        """强制执行 Token 上限，从最旧消息开始逐条删除直到回到限制内
+
+        Args:
+            storage_event: session 的存储 key
+        """
+        history = self._histories.get(storage_event)
+        if history is None:
+            return
+
+        current_tokens = self._session_tokens.get(storage_event, 0)
+
+        while current_tokens > self.MAX_HISTORY_TOKENS and len(history) > 1:
+            # 从最旧的消息开始删除
+            oldest = history[0]
+            removed_tokens = _estimate_tokens(oldest.content)
+            history.popleft()
+            current_tokens -= removed_tokens
+
+        self._session_tokens[storage_event] = current_tokens
 
     def get_history(
         self,

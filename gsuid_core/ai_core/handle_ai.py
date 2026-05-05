@@ -15,6 +15,9 @@ AI聊天处理模块
 import asyncio
 from datetime import datetime
 
+# 导入表情包模块以注册 on_core_start 钩子和 @ai_tools
+import gsuid_core.ai_core.meme.startup  # noqa: F401
+import gsuid_core.ai_core.buildin_tools.meme_tools  # noqa: F401
 from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
@@ -25,10 +28,13 @@ from gsuid_core.ai_core.ai_router import (
 )
 from gsuid_core.ai_core.classifier import classifier_service
 from gsuid_core.ai_core.statistics import statistics_manager
+from gsuid_core.ai_core.persona.mood import update_mood
 from gsuid_core.ai_core.memory.config import memory_config
 from gsuid_core.ai_core.configs.ai_config import ai_config
 from gsuid_core.ai_core.buildin_tools.subagent import create_subagent
 from gsuid_core.ai_core.memory.retrieval.dual_route import dual_route_retrieve
+
+# 导入表情包模块以注册 on_core_start 钩子和 @ai_tools
 
 # AI服务配置开关
 enable_ai: bool = ai_config.get_config("enable").data
@@ -71,6 +77,14 @@ async def handle_ai_chat(bot: Bot, event: Event):
 
     async with _ai_semaphore:
         try:
+            # 异步采集群聊图片到表情包库（不阻塞主流程）
+            try:
+                from gsuid_core.ai_core.meme.observer import observe_message_for_memes
+
+                asyncio.create_task(observe_message_for_memes(event, ""))
+            except ImportError:
+                pass  # meme 模块未加载
+
             query = event.raw_text
 
             # ============================================================
@@ -115,7 +129,7 @@ async def handle_ai_chat(bot: Bot, event: Event):
             # ============================================================
             # 步骤 4: 准备用户消息
             # ============================================================
-            user_messages = prepare_content_payload(event)
+            user_messages = await prepare_content_payload(event)
 
             # 运行时注入当前时间
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -212,5 +226,70 @@ async def handle_ai_chat(bot: Bot, event: Event):
                 await send_chat_result(bot, chat_result)
                 logger.info(f"🧠 [GsCore][AI] 回复已发送 (模式: {intent})")
 
+            # ============================================================
+            # 步骤 9: 更新 Persona 情绪状态（异步，不阻塞主流程）
+            # 根据用户消息内容推断情绪事件类型
+            # 群聊使用 group_id，私聊使用 user_id 作为情绪隔离 key
+            # ============================================================
+            if session.persona_name:
+                mood_key = str(event.group_id) if event.group_id else str(event.user_id)
+                asyncio.create_task(
+                    _update_persona_mood(
+                        persona_name=session.persona_name,
+                        group_id=mood_key,
+                        user_message=query,
+                    )
+                )
+
         except Exception as e:
             logger.exception(f"🧠 [GsCore][AI] 聊天异常: {e}")
+
+
+async def _update_persona_mood(
+    persona_name: str,
+    group_id: str,
+    user_message: str,
+) -> None:
+    """根据用户消息内容推断情绪事件并更新 Persona 情绪状态
+
+    使用简单的关键词匹配进行情绪事件检测，避免额外的 LLM 调用。
+
+    Args:
+        persona_name: Persona 名称
+        group_id: 群聊 ID
+        user_message: 用户消息内容
+    """
+    try:
+        text = user_message.lower()
+
+        # 赞美关键词
+        praise_keywords = ["可爱", "厉害", "棒", "好强", "喜欢你", "真好", "太帅了", "漂亮", "萌", "赞"]
+        # 争执关键词
+        argument_keywords = ["讨厌", "烦死了", "闭嘴", "滚", "垃圾", "废物", "白痴"]
+        # 伤心事关键词
+        sad_keywords = ["难过", "伤心", "哭了", "不开心", "郁闷", "心痛", "分手"]
+        # 坏消息关键词
+        bad_news_keywords = ["出事了", "出问题了", "报错", "崩了", "挂了", "失败了"]
+        # 友好问候关键词
+        greeting_keywords = ["你好", "早上好", "晚上好", "嗨", "hi", "hello", "在吗"]
+        # 兴奋关键词
+        exciting_keywords = ["太棒了", "太好了", "耶", "开心", "中奖了", "成功了"]
+
+        if any(kw in text for kw in praise_keywords):
+            await update_mood(persona_name, group_id, "praise", 0.3, "用户赞美")
+        elif any(kw in text for kw in argument_keywords):
+            await update_mood(persona_name, group_id, "argument", 0.4, "用户争执")
+        elif any(kw in text for kw in sad_keywords):
+            await update_mood(persona_name, group_id, "sad_news", 0.3, "用户表达伤心")
+        elif any(kw in text for kw in bad_news_keywords):
+            await update_mood(persona_name, group_id, "bad_news", 0.3, "用户报告坏消息")
+        elif any(kw in text for kw in exciting_keywords):
+            await update_mood(persona_name, group_id, "exciting", 0.3, "用户表达兴奋")
+        elif any(kw in text for kw in greeting_keywords):
+            await update_mood(persona_name, group_id, "greeting", 0.2, "用户友好问候")
+        else:
+            # 普通消息，情绪自然衰减（neutral 会降低当前情绪强度）
+            await update_mood(persona_name, group_id, "neutral", 0.05, "")
+
+    except Exception as e:
+        logger.debug(f"🎭 [Mood] 情绪更新失败: {e}")

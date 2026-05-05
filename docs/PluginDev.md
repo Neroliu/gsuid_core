@@ -565,6 +565,59 @@ async def admin_handler(bot, event):
 
 ---
 
+## 十一、AI 能力集成
+
+### 11.1 Web Search 统一搜索
+
+插件可以通过统一搜索接口调用 Web 搜索，无需关心底层搜索引擎实现：
+
+```python
+from gsuid_core.ai_core.web_search.search import web_search
+
+async def my_handler(bot, event):
+    results = await web_search("最新天气预报", max_results=3)
+    for r in results:
+        await bot.send(f"{r['title']}: {r['url']}")
+```
+
+搜索提供方通过 `ai_config.websearch_provider` 配置切换（Tavily / Exa / MCP）。
+
+### 11.2 Image Understand 图片理解
+
+当需要将图片内容转述为文本时（如 LLM 不支持图片输入），可使用图片理解接口：
+
+```python
+from gsuid_core.ai_core.image_understand import understand_image
+
+async def analyze_image(bot, event):
+    for img_url in event.image_list:
+        description = await understand_image(img_url)
+        await bot.send(f"图片描述: {description}")
+```
+
+### 11.3 MCP 工具调用
+
+插件可以通过 MCP 协议调用外部工具服务器：
+
+```python
+from gsuid_core.ai_core.mcp.mcp_tool_caller import call_mcp_tool
+
+async def my_handler(bot, event):
+    result = await call_mcp_tool(
+        mcp_tool_id="minimax - web_search",
+        arguments={"query": event.text},
+    )
+    await bot.send(result.text)
+```
+
+### 11.4 表情包模块
+
+表情包模块自动集成在 AI 聊天流程中，插件开发者无需额外操作。AI 可以通过 `send_meme`、`collect_meme`、`search_meme` 工具自主管理表情包。
+
+> **详细文档**: 见 [MEME_MODULE.md](./MEME_MODULE.md)
+
+---
+
 ## 附录：类型提示参考
 
 GsCore 项目**严格要求**类型提示，详见 [LLM.md](./LLM.md)。核心要点：

@@ -5,6 +5,7 @@ from gsuid_core.webconsole import (
     web_api,
     auth_api,
     logs_api,
+    meme_api,
     mount_app,
     theme_api,
     assets_api,
@@ -81,4 +82,5 @@ __all__ = [
     "site",
     "_setup_frontend",
     "message_api",
+    "meme_api",
 ]

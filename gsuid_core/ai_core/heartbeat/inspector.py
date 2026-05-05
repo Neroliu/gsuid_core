@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.server import _Bot
+from gsuid_core.ai_core.utils import send_chat_result
 from gsuid_core.ai_core.history import get_history_manager
 from gsuid_core.ai_core.ai_router import get_ai_session_by_id
 from gsuid_core.ai_core.statistics import statistics_manager
@@ -312,23 +313,18 @@ class HeartbeatInspector:
         reason: str,
     ) -> None:
         try:
+            from gsuid_core.bot import Bot
+
             _bot = await self._get_bot_for_session(event)
             if not _bot:
                 logger.warning(f"🫀 [Heartbeat] 找不到可用的 Bot ({event})")
                 return
 
-            target_type = "group" if event.group_id else "direct"
+            # 创建 Bot 实例以使用 send_chat_result（支持 @语法解析）
+            bot_instance = Bot(_bot, event)
+            await send_chat_result(bot_instance, message)
+
             target_id = event.group_id or user_id
-
-            # _Bot.target_send 签名：target_send(message, target_type, target_id, bot_id, bot_self_id, ...)
-            await _bot.target_send(
-                message=message,
-                target_type=target_type,
-                target_id=target_id,
-                bot_id=event.bot_id,
-                bot_self_id=event.bot_self_id,
-            )
-
             logger.info(f"🫀 [Heartbeat] 发送成功 -> {target_id}: {message}")
 
             # 追加到系统历史记忆，带上特定的 metadata 标记

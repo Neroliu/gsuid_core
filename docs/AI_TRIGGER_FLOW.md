@@ -33,6 +33,9 @@
 8. [WebConsole API 与配置热重载](#8-webconsole-api-与配置热重载)
 9. [AI Statistics 统计系统](#9-ai-statistics-统计系统)
 10. [Memory 记忆系统](#10-memory-记忆系统)
+    - [10.14 Meme 表情包模块](#1014-meme-表情包模块)
+    - [10.15 Image Understand 图片理解模块](#1015-image-understand-图片理解模块)
+    - [10.16 Web Search 统一搜索接口](#1016-web-search-统一搜索接口)
     - [10.1 概述](#101-概述)
     - [10.2 模块结构](#102-模块结构)
     - [10.3 核心架构](#103-核心架构)
@@ -62,14 +65,14 @@ gsuid_core/ai_core/
 ├── __init__.py          # 核心初始化入口
 ├── ai_router.py         # Session 路由管理
 ├── check_func.py        # 检查函数
-├── gs_agent.py          # AI Agent 实现
+├── gs_agent.py          # AI Agent 实现（含 _prepare_user_message 图片处理）
 ├── handle_ai.py         # AI 聊天处理入口
 ├── models.py            # 数据模型
 ├── normalize.py         # 查询规范化 (已移至子模块)
 ├── register.py          # 工具注册
 ├── resource.py          # 资源管理 (含 MCP_CONFIGS_PATH)
 ├── trigger_bridge.py    # 触发器→AI工具桥接 (MockBot/ai_return)
-├── utils.py             # 工具函数
+├── utils.py             # 工具函数（含 prepare_content_payload、send_chat_result）
 ├── configs/             # 配置文件
 │   ├── __init__.py
 │   ├── ai_config.py     # AI 全局配置
@@ -177,13 +180,18 @@ gsuid_core/ai_core/
 │   ├── storage.py
 │   └── vector_store.py
 ├── mcp/                  # MCP (Model Context Protocol) 工具集成
-│   ├── __init__.py       # 模块导出
-│   ├── client.py         # MCP 客户端（基于 fastmcp）
-│   ├── config_manager.py # MCP 配置管理器（增删改查）
-│   └── startup.py        # 启动时自动注册 MCP 工具
+│   ├── __init__.py       # 模块导出（MCPClient, MCPConfig, mcp_config_manager 等）
+│   ├── client.py         # MCP 客户端（基于 fastmcp，stdio 传输）
+│   ├── config_manager.py # MCP 配置管理器（增删改查 + MCPToolDefinition）
+│   ├── mcp_tool_caller.py # 通用 MCP 工具调用模块（call_mcp_tool）
+│   ├── mcp_tools_config.py # MCP 工具配置（websearch/image_understand 的 MCP 工具 ID）
+│   └── startup.py        # 启动时自动注册 MCP 工具 + 热重载
+├── image_understand/     # 图片理解模块
+│   ├── __init__.py       # 模块导出（understand_image）
+│   └── understand.py     # 统一图片理解接口（MCP 驱动）
 └── web_search/           # Web 搜索
     ├── __init__.py
-    └── search.py
+    └── search.py         # 统一搜索接口（Tavily/Exa/MCP 三选一）
 ```
 
 ### 1.2 核心组件关系
@@ -968,8 +976,13 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 | 工具 | 说明 |
 |------|------|
 | `search_knowledge` | 检索知识库内容 |
-| `web_search` | Web搜索 (Tavily API) |
+| `web_search` | Web搜索（支持 Tavily / Exa / MCP 三种提供方，通过 `websearch_provider` 配置切换） |
+| `web_fetch` | 网页抓取（转 Markdown） |
 | `query_user_memory` | 查询用户记忆条数 |
+| `send_trigger_images` | 发送触发器拦截到的图片（通过资源 ID） |
+| `send_meme` | 发送表情包（根据情绪/场景智能选取） |
+| `collect_meme` | 手动收集表情包 |
+| `search_meme` | 搜索表情包库 |
 
 #### 5.5.8 通常工具 (`category="common"`)
 
@@ -1088,10 +1101,12 @@ AI 调用（权限通过，AI 决定不发图）：
 
 ```
 mcp/
-├── __init__.py         # 模块导出
-├── client.py           # MCP 客户端（基于 fastmcp，stdio 传输）
-├── config_manager.py   # MCP 配置管理器（JSON 文件存储）
-└── startup.py          # 启动时自动注册 MCP 工具
+├── __init__.py           # 模块导出（MCPClient, MCPConfig, mcp_config_manager 等）
+├── client.py             # MCP 客户端（基于 fastmcp，stdio 传输）
+├── config_manager.py     # MCP 配置管理器（JSON 文件存储 + MCPToolDefinition）
+├── mcp_tool_caller.py    # 通用 MCP 工具调用模块（call_mcp_tool）
+├── mcp_tools_config.py   # MCP 工具配置（websearch/image_understand 的 MCP 工具 ID）
+└── startup.py            # 启动时自动注册 MCP 工具 + 热重载
 ```
 
 **配置存储**: `data/ai_core/mcp_configs/{config_id}.json`
@@ -1102,9 +1117,36 @@ mcp/
     "command": "uvx",
     "args": ["minimax-coding-plan-mcp"],
     "env": {"MINIMAX_API_KEY": "your_key"},
-    "enabled": true
+    "enabled": true,
+    "register_as_ai_tools": false,
+    "tools": [
+        {
+            "name": "web_search",
+            "description": "Web search tool",
+            "parameters": {
+                "query": {"type": "string", "required": true},
+                "max_results": {"type": "integer", "required": false}
+            }
+        }
+    ]
 }
 ```
+
+**新增配置字段**:
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `register_as_ai_tools` | `bool` | `false` | 是否将该 MCP 服务器的工具注册为 AI Tools（供主Agent/子Agent 调用） |
+| `tools` | `list[MCPToolDefinition]` | `[]` | 该 MCP 服务器的所有可用工具及其参数定义 |
+
+**MCP 工具 ID 格式**: `{mcp_id} - {tool_name}`，例如 `minimax - web_search`。用于在 `mcp_tools_config` 中指定 Web Search 和 Image Understand 使用的 MCP 工具。
+
+**MCP 工具配置** (`data/ai_core/mcp_tools_config.json`):
+
+| 配置项 | 说明 | 示例值 |
+|--------|------|--------|
+| `websearch_mcp_tool_id` | Web Search 使用的 MCP 工具 ID | `minimax - web_search` |
+| `image_understand_mcp_tool_id` | 图片理解使用的 MCP 工具 ID | `minimax - understand_image` |
 
 **启动注册流程**:
 
@@ -1150,6 +1192,19 @@ AI 决策调用 MCP 工具
         └── 失败: 返回错误信息
 ```
 
+**通用 MCP 工具调用** (`mcp_tool_caller.py`):
+
+`call_mcp_tool()` 函数允许通过 MCP 工具 ID 直接调用 MCP 服务器上的工具，无需将工具注册为 AI Tools。Web Search 和 Image Understand 模块通过此函数调用 MCP 工具。
+
+```python
+from gsuid_core.ai_core.mcp.mcp_tool_caller import call_mcp_tool
+
+result = await call_mcp_tool(
+    mcp_tool_id="minimax - web_search",
+    arguments={"query": "Python 教程"},
+)
+```
+
 **WebConsole API 端点**:
 
 | 方法 | 端点 | 功能 |
@@ -1161,8 +1216,16 @@ AI 决策调用 MCP 工具
 | DELETE | `/api/ai/mcp/{config_id}` | 删除 MCP 配置 |
 | POST | `/api/ai/mcp/{config_id}/toggle` | 切换启用/禁用状态 |
 | POST | `/api/ai/mcp/reload` | 热重载所有配置并重新注册工具 |
+| GET | `/api/ai/mcp/{config_id}/tools` | 从已配置的 MCP 服务器发现工具 |
+| POST | `/api/ai/mcp/tools/discover` | 从临时配置发现工具（不保存） |
+| POST | `/api/ai/mcp/tools/import` | 从 JSON 导入 MCP 配置 |
+| GET | `/api/ai/mcp/presets` | 获取 MCP 预设列表 |
+
+**MCP 预设配置**: 系统内置 5 个 MCP 预设（MiniMax、Firecrawl、Tavily、GitHub、Filesystem），用户可通过预设快速添加 MCP 服务器。
 
 **热重载**: 通过 `POST /api/ai/mcp/reload` 可以在运行时重新加载所有 MCP 配置并重新注册工具，无需重启服务。
+
+> **详细前端集成文档**: 见 [MCP_FRONTEND_INTEGRATION.md](./MCP_FRONTEND_INTEGRATION.md)
 
 #### 5.5.12 核心函数
 
@@ -1938,17 +2001,21 @@ from gsuid_core.ai_core.buildin_tools.scheduler import (
 
 **文件位置**: [`gsuid_core/webconsole/mcp_config_api.py`](gsuid_core/webconsole/mcp_config_api.py)
 
-MCP 配置 API 允许用户通过前端自由管理 MCP 服务器配置，支持增删改查、启用/禁用和热重载。
+MCP 配置 API 允许用户通过前端自由管理 MCP 服务器配置，支持增删改查、启用/禁用、工具发现、JSON 导入和热重载。
 
 | 方法 | 端点 | 功能 |
 |------|------|------|
-| GET | `/api/ai/mcp/list` | 获取所有 MCP 配置列表 |
+| GET | `/api/ai/mcp/list` | 获取所有 MCP 配置列表（含 tools 字段） |
 | GET | `/api/ai/mcp/{config_id}` | 获取指定配置详情 |
 | POST | `/api/ai/mcp` | 创建新 MCP 配置 |
 | PUT | `/api/ai/mcp/{config_id}` | 更新 MCP 配置 |
 | DELETE | `/api/ai/mcp/{config_id}` | 删除 MCP 配置 |
 | POST | `/api/ai/mcp/{config_id}/toggle` | 切换启用/禁用状态 |
 | POST | `/api/ai/mcp/reload` | 热重载所有配置并重新注册工具 |
+| GET | `/api/ai/mcp/{config_id}/tools` | 从已配置的 MCP 服务器发现工具 |
+| POST | `/api/ai/mcp/tools/discover` | 从临时配置发现工具（不保存） |
+| POST | `/api/ai/mcp/tools/import` | 从 JSON 导入 MCP 配置（支持 `mcpServers` 格式） |
+| GET | `/api/ai/mcp/presets` | 获取 MCP 预设列表（MiniMax/Firecrawl/Tavily/GitHub/Filesystem） |
 
 **创建配置请求体**:
 
@@ -1958,11 +2025,25 @@ MCP 配置 API 允许用户通过前端自由管理 MCP 服务器配置，支持
     "command": "uvx",
     "args": ["minimax-coding-plan-mcp"],
     "env": {"MINIMAX_API_KEY": "your_key"},
-    "enabled": true
+    "enabled": true,
+    "register_as_ai_tools": false,
+    "tools": [
+        {
+            "name": "web_search",
+            "description": "Web search tool",
+            "parameters": {
+                "query": {"type": "string", "required": true}
+            }
+        }
+    ]
 }
 ```
 
+**JSON 导入**: `POST /api/ai/mcp/tools/import` 支持导入标准 MCP JSON 格式（含 `mcpServers` 字段），自动解析配置、连接服务器发现工具并创建配置。
+
 **热重载**: `POST /api/ai/mcp/reload` 会清除已注册的 MCP 工具，重新加载配置文件，并重新连接所有启用的 MCP 服务器注册工具。
+
+> **详细前端集成文档**: 见 [MCP_FRONTEND_INTEGRATION.md](./MCP_FRONTEND_INTEGRATION.md)
 
 ### 8.0.1 嵌入模型配置 API
 
@@ -3150,6 +3231,147 @@ async def init_memory_system():
 
 ---
 
+### 10.14 Meme 表情包模块
+
+**文件位置**: [`gsuid_core/ai_core/meme/`](gsuid_core/ai_core/meme/)
+
+让 AI 在群聊中具备「表情包意识」：自动采集群聊图片、智能打标、分类存储、智能发送。
+
+> **详细设计文档**: 见 [MEME_MODULE.md](./MEME_MODULE.md)
+
+**模块结构**:
+
+```
+meme/
+├── config.py            # 配置项（StringConfig）
+├── database_model.py    # AiMemeRecord SQLModel 表
+├── filter.py            # 去重 + 质量过滤
+├── library.py           # 文件 + DB + Qdrant 操作
+├── observer.py          # 消息流监听（asyncio.create_task fire-and-forget）
+├── selector.py          # 检索 + 决策
+├── startup.py           # @on_core_start 钩子
+└── tagger.py            # VLM 打标引擎
+```
+
+**AI 工具** (`buildin_tools/meme_tools.py`):
+
+| 工具 | 说明 |
+|------|------|
+| `send_meme` | 根据情绪/场景智能选取并发送表情包 |
+| `collect_meme` | 手动收集表情包入库 |
+| `search_meme` | 搜索表情包库 |
+
+**集成点**:
+- `handle_ai.py` 中通过 `asyncio.create_task(observe_message_for_memes(event, ""))` 异步采集群聊图片
+- `handle_ai.py` 中导入 `meme.startup` 和 `meme_tools` 以注册 `@on_core_start` 钩子和 `@ai_tools`
+
+---
+
+### 10.15 Image Understand 图片理解模块
+
+**文件位置**: [`gsuid_core/ai_core/image_understand/`](gsuid_core/ai_core/image_understand/)
+
+提供统一的图片理解接口，将图片内容转述为文本描述。当 LLM 模型不支持图片输入时，自动调用本模块将图片转述为文本后再发送给 LLM。
+
+**模块结构**:
+
+```
+image_understand/
+├── __init__.py       # 模块导出（understand_image）
+└── understand.py     # 统一图片理解接口（MCP 驱动）
+```
+
+**核心函数**:
+
+```python
+from gsuid_core.ai_core.image_understand import understand_image
+
+async def understand_image(
+    image_url: str,       # 图片来源（HTTP URL 或 base64 DataURI）
+    prompt: str | None = None,  # 对图片的提问，默认为通用描述
+) -> str:                 # 图片内容的文本描述
+```
+
+**配置项** (`ai_config`):
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `image_understand_provider` | str | `"MCP"` | 图片理解服务提供方（目前仅支持 MCP） |
+
+**工作流程**:
+
+```
+GsCoreAIAgent._prepare_user_message()
+    │
+    ├── 检查 model_support 配置
+    │   ├── "image" in model_support → 保留 ImageUrl，直接传图给 LLM
+    │   └── "image" not in model_support → 调用 understand_image 转述
+    │
+    └── understand_image(image_url)
+        ├── 读取 mcp_tools_config["image_understand_mcp_tool_id"]
+        ├── call_mcp_tool(mcp_tool_id, arguments)
+        └── 返回文本描述
+```
+
+**与 GsCoreAIAgent 的集成**: [`_prepare_user_message()`](gsuid_core/ai_core/gs_agent.py:177) 方法在 `_execute_run` 中自动处理：
+- 分离文本和图片内容
+- 检查当前模型的 `model_support` 配置
+- 模型支持图片时保留 `ImageUrl`
+- 模型不支持图片时调用 `understand_image()` 将图片转述为文本
+
+---
+
+### 10.16 Web Search 统一搜索接口
+
+**文件位置**: [`gsuid_core/ai_core/web_search/search.py`](gsuid_core/ai_core/web_search/search.py)
+
+提供统一的 Web 搜索接口，根据用户配置自动选择搜索引擎（Tavily / Exa / MCP）。
+
+**核心函数**:
+
+```python
+from gsuid_core.ai_core.web_search.search import web_search, web_search_with_context
+
+async def web_search(query: str, max_results: int | None = None) -> list[dict]
+async def web_search_with_context(query: str, max_results: int = 5) -> dict
+```
+
+**配置项** (`ai_config`):
+
+| 配置项 | 类型 | 默认值 | 选项 | 说明 |
+|--------|------|--------|------|------|
+| `websearch_provider` | str | `"Tavily"` | `Tavily` / `Exa` / `MCP` | Web 搜索服务提供方 |
+
+**提供方对比**:
+
+| 提供方 | 说明 | 配置方式 |
+|--------|------|----------|
+| Tavily | Tavily AI 搜索（默认） | `TAVILY_API_KEY` 环境变量 |
+| Exa | Exa 搜索引擎 | `EXA_API_KEY` 环境变量 |
+| MCP | 通过 MCP 协议调用搜索工具 | `mcp_tools_config.websearch_mcp_tool_id` |
+
+**MCP 搜索流程**:
+
+```
+web_search(query)
+    │
+    ├── provider == "MCP"
+    │   └── _mcp_search(query)
+    │       ├── 读取 mcp_tools_config["websearch_mcp_tool_id"]
+    │       ├── call_mcp_tool(mcp_tool_id, {"query": query})
+    │       └── _parse_mcp_search_result() 标准化结果格式
+    │
+    ├── provider == "Exa"
+    │   └── exa_search(query)
+    │
+    └── 默认 Tavily
+        └── tavily_search(query)
+```
+
+> **注意**: MiniMax 搜索已从独立实现迁移至 MCP 驱动，原 `minimax_search.py` 已删除。
+
+---
+
 ## 11. 嵌入模型提供方抽象层
 
 ### 11.1 概述
@@ -3505,10 +3727,26 @@ async def init_memory_system():
 | [`gsuid_core/ai_core/__init__.py`](gsuid_core/ai_core/__init__.py) | AI Core 初始化 |
 | [`gsuid_core/ai_core/ai_router.py`](gsuid_core/ai_core/ai_router.py) | Session 路由 |
 | [`gsuid_core/ai_core/handle_ai.py`](gsuid_core/ai_core/handle_ai.py) | AI 处理入口 |
+| [`gsuid_core/ai_core/gs_agent.py`](gsuid_core/ai_core/gs_agent.py) | AI Agent 实现（含图片处理） |
+| [`gsuid_core/ai_core/utils.py`](gsuid_core/ai_core/utils.py) | 工具函数（prepare_content_payload、send_chat_result） |
 | [`gsuid_core/ai_core/persona/config.py`](gsuid_core/ai_core/persona/config.py) | Persona 配置 |
 | [`gsuid_core/ai_core/heartbeat/inspector.py`](gsuid_core/ai_core/heartbeat/inspector.py) | 巡检器 |
 | [`gsuid_core/ai_core/heartbeat/decision.py`](gsuid_core/ai_core/heartbeat/decision.py) | LLM 决策 |
+| [`gsuid_core/ai_core/mcp/__init__.py`](gsuid_core/ai_core/mcp/__init__.py) | MCP 模块导出 |
+| [`gsuid_core/ai_core/mcp/client.py`](gsuid_core/ai_core/mcp/client.py) | MCP 客户端 |
+| [`gsuid_core/ai_core/mcp/config_manager.py`](gsuid_core/ai_core/mcp/config_manager.py) | MCP 配置管理器 |
+| [`gsuid_core/ai_core/mcp/mcp_tool_caller.py`](gsuid_core/ai_core/mcp/mcp_tool_caller.py) | 通用 MCP 工具调用 |
+| [`gsuid_core/ai_core/mcp/mcp_tools_config.py`](gsuid_core/ai_core/mcp/mcp_tools_config.py) | MCP 工具配置 |
+| [`gsuid_core/ai_core/mcp/startup.py`](gsuid_core/ai_core/mcp/startup.py) | MCP 启动注册 |
+| [`gsuid_core/ai_core/image_understand/__init__.py`](gsuid_core/ai_core/image_understand/__init__.py) | 图片理解模块导出 |
+| [`gsuid_core/ai_core/image_understand/understand.py`](gsuid_core/ai_core/image_understand/understand.py) | 图片理解接口 |
+| [`gsuid_core/ai_core/web_search/search.py`](gsuid_core/ai_core/web_search/search.py) | 统一搜索接口 |
+| [`gsuid_core/ai_core/meme/startup.py`](gsuid_core/ai_core/meme/startup.py) | 表情包模块启动 |
+| [`gsuid_core/ai_core/meme/observer.py`](gsuid_core/ai_core/meme/observer.py) | 表情包消息监听 |
+| [`gsuid_core/ai_core/meme/library.py`](gsuid_core/ai_core/meme/library.py) | 表情包库操作 |
+| [`gsuid_core/ai_core/buildin_tools/meme_tools.py`](gsuid_core/ai_core/buildin_tools/meme_tools.py) | 表情包 AI 工具 |
 | [`gsuid_core/webconsole/persona_api.py`](gsuid_core/webconsole/persona_api.py) | Persona API |
+| [`gsuid_core/webconsole/mcp_config_api.py`](gsuid_core/webconsole/mcp_config_api.py) | MCP 配置 API |
 | [`gsuid_core/utils/plugins_config/gs_config.py`](gsuid_core/utils/plugins_config/gs_config.py) | 配置管理 |
 | [`gsuid_core/ai_core/memory/__init__.py`](gsuid_core/ai_core/memory/__init__.py) | 记忆系统模块导出 |
 | [`gsuid_core/ai_core/memory/config.py`](gsuid_core/ai_core/memory/config.py) | 记忆系统配置 |
@@ -3597,3 +3835,4 @@ Session ID 格式说明:
 | 2026-04-18 | v3.0 | 新增第10节 Memory 记忆系统：基于 Mnemis 双路检索的多群组/多用户 Agent 记忆系统，包含 Observer 观察者管道、Ingestion 摄入引擎（两阶段 Entity 去重 + Edge 冲突检测）、Dual-Route Retrieval 双路检索（System-1 向量相似度 + System-2 分层图遍历 + Reranker 重排序）、Hierarchical Graph 分层语义图、Scope Key 隔离体系、SQLAlchemy 图结构模型 + Qdrant 向量索引；更新 1.1 节目录结构（新增 memory/ 模块）；更新 9 节统计系统（新增 7 项记忆统计指标）；更新附录 A（新增记忆系统相关文件路径）；更新完整流程图章节编号（8→11） |
 | 2026-04-19 | v3.1 | 全面核对 ai_core 代码与文档一致性，修正以下内容：1.1 模块结构（新增 dynamic_tool_discovery.py、dataclass_models.py、startup.py、scheduled_task/scheduler.py，移除 adapter.py、episode.py）；2.3 MAX_SUMMARY_LENGTH 4000→8000；3.1 AI 处理流程（8步：含记忆检索、send_chat_result、observe）；5.1 Session 创建（create_agent 移除 model_name、新增 create_by="Chat"，mtime 缓存，session_id 格式 bot:{bot_id}:group:{group_id}）；5.3 内存保护（DEFAULT_MAX_MESSAGES=40、MAX_AI_HISTORY_LENGTH=30、移除 MAX_HISTORY_CHARS、Agent 内部截断含 ToolCall/ToolReturn 配对保护）；5.5.2 @ai_tools 新增 check_func/**check_kwargs 参数和智能参数注入；5.5.7 buildin 工具新增 query_user_memory；5.5.10-5.5.11 动态工具发现和核心函数签名；6.4 巡检流程（_pre_check_session + _inspect_session_with_semaphore 两阶段）；6.5 决策 Prompt（mood/context_hook 替代 reason，_parse_decision_json，_strip_message_quotes）；6.7.1 INACTIVE_THRESHOLD_HOURS=1；6.7.2 _get_bot_for_session 三级查找（gss.active_bot）；7.2 模块结构（scheduler.py、startup.py）；7.4.2 独立工具函数替代 manage_scheduled_task；7.6-7.11 架构图和使用流程；8.1 统计模块结构（dataclass_models.py、startup.py）；8.3 数据库模型（BaseIDModel、AITokenUsageByType、api_529_count、memory 字段）；8.4 持久化机制（startup.py）；8.6 record_token_usage 新增 chat_type 参数；10.2 移除 episode.py；10.4 Scope Key 格式修正（ScopeType.GROUP:789012）；10.5 ObservationRecord 移除 ai_reply；10.6/10.11 batch_interval_seconds=1800、llm_semaphore_limit=2；10.9 数据库模型（SQLModel 非 BaseIDModel、AIMemHierarchicalGraphMeta 在 hiergraph.py）；10.12.3 启动初始化（无 create_all、IngestionWorker() 无参）；11.3 Heartbeat 流程图（mood/context_hook）；附录 B model_name 热重载 ✅；附录 C Session ID 格式 bot:{bot_id}:group:{group_id} |
 | 2026-04-24 | v3.2 | Memory 系统 Bug 修复与性能优化：修复 B-01（Edge 去重 key 拼接 f-string 错误，worker.py）；修复 B-02（entity 计数虚高导致频繁重建 hiergraph，models.py/entity.py/worker.py）；修复 B-03（_apply_entity_assignments 新建 Category 初始化缺失，hiergraph.py）；优化 P-01（Entity 向量去重串行改并行，models.py）；优化 P-04（Reranker 三路并行化，dual_route.py）；优化 P-03（ORM Relationship lazy='selectin' 改为 'noload'，消除 N+1 查询，models.py）；修复 M-06（Speaker 强制 Layer-1 归类硬性保障，hiergraph.py）；新增 System-1 One-hop 邻居扩展（system1.py/ops.py）；新增已知问题 D-12~D-17 |
+| 2026-05-05 | v4.0 | **MCP 重构 + Image Understand + Meme Module + Web Search 统一接口**：1.1 模块结构（新增 mcp/mcp_tool_caller.py、mcp/mcp_tools_config.py、image_understand/ 模块、meme/ 模块）；5.5.7 buildin 工具新增 web_fetch、send_trigger_images、send_meme/collect_meme/search_meme；5.5.12 MCP 工具集成全面更新（新增 register_as_ai_tools/tools 字段、MCP 工具 ID 格式、mcp_tools_config 配置、通用 call_mcp_tool 调用、MCP 预设配置、4 个新 API 端点）；8.0 MCP 配置 API 新增 tools/discover/import/presets 端点；新增 10.14 Meme 表情包模块（引用 MEME_MODULE.md）；新增 10.15 Image Understand 图片理解模块（MCP 驱动，GsCoreAIAgent._prepare_user_message 自动处理）；新增 10.16 Web Search 统一搜索接口（Tavily/Exa/MCP 三选一，MiniMax 搜索迁移至 MCP）；附录 A 新增 MCP/ImageUnderstand/Meme/WebSearch 相关文件路径 |

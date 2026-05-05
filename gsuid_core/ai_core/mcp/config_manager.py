@@ -10,49 +10,169 @@ MCP 配置管理器模块
     "command": "uvx",
     "args": ["minimax-coding-plan-mcp"],
     "env": {"MINIMAX_API_KEY": "your_key"},
-    "enabled": true
+    "enabled": true,
+    "register_as_ai_tools": false,
+    "tools": [
+        {
+            "name": "web_search",
+            "description": "Web search tool",
+            "parameters": {
+                "query": {"type": "string", "required": true},
+                "max_results": {"type": "integer", "required": false}
+            }
+        }
+    ]
 }
 """
 
 import json
 from typing import Any
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import field, dataclass
 
 from gsuid_core.logger import logger
 from gsuid_core.ai_core.resource import MCP_CONFIGS_PATH
 
+# 配置 ID 格式分隔符
+MCP_TOOL_ID_SEPARATOR = " - "
+
 
 @dataclass
-class MCPConfig:
-    """MCP 服务器配置数据类"""
+class MCPToolDefinition:
+    """MCP 工具定义"""
 
     name: str
-    command: str
-    args: list[str]
-    env: dict[str, str]
-    enabled: bool = True
+    description: str = ""
+    parameters: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MCPToolDefinition":
+        """从字典创建工具定义"""
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            parameters=data.get("parameters", {}),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
         return {
             "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+
+
+@dataclass
+class MCPConfig:
+    """MCP 服务器配置数据类
+
+    Attributes:
+        name: MCP 服务器名称
+        command: 启动命令
+        args: 命令参数
+        env: 环境变量
+        enabled: 是否启用
+        register_as_ai_tools: 是否将该 MCP 服务器的工具注册为 AI Tools
+        tools: 工具列表
+        tool_permissions: 工具权限配置，格式为 {tool_name: required_pm}
+            值为最低权限等级（pm），与 Event.user_pm 对比：
+            - 0: 仅 master 用户
+            - 1: superuser 及以上
+            - 2: 群主/管理员及以上
+            - 3: 所有用户（默认）
+            例如 {"send_email": 0, "query_data": 3}
+    """
+
+    name: str
+    command: str
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    enabled: bool = True
+    register_as_ai_tools: bool = False  # 是否将该 MCP 服务器的工具注册为 AI Tools
+    tools: list[MCPToolDefinition] = field(default_factory=list)  # 工具列表
+    tool_permissions: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """转换为字典"""
+        result: dict[str, Any] = {
+            "name": self.name,
             "command": self.command,
             "args": self.args,
             "env": self.env,
             "enabled": self.enabled,
+            "register_as_ai_tools": self.register_as_ai_tools,
+            "tools": [t.to_dict() for t in self.tools],
         }
+        if self.tool_permissions:
+            result["tool_permissions"] = self.tool_permissions
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MCPConfig":
         """从字典创建配置"""
+        tools = [MCPToolDefinition.from_dict(t) for t in data.get("tools", [])]
         return cls(
             name=data["name"],
             command=data["command"],
             args=data.get("args", []),
             env=data.get("env", {}),
             enabled=data.get("enabled", True),
+            register_as_ai_tools=data.get("register_as_ai_tools", False),
+            tools=tools,
+            tool_permissions=data.get("tool_permissions", {}),
         )
+
+    def get_tool_required_pm(self, tool_name: str) -> int:
+        """获取指定工具所需的最低权限等级
+
+        Args:
+            tool_name: 工具名称
+
+        Returns:
+            权限等级 (0=master, 1=superuser, 2=admin, 3=所有人)
+            默认返回 3（所有人可用）
+        """
+        return self.tool_permissions.get(tool_name, 3)
+
+
+def parse_mcp_tool_id(mcp_tool_id: str) -> tuple[str, str]:
+    """
+    解析 MCP 工具 ID
+
+    格式: "{mcp_id}{separator}{tool_name}"
+    例如: "minimax - web_search"
+
+    Args:
+        mcp_tool_id: MCP 工具 ID
+
+    Returns:
+        (mcp_id, tool_name) 元组
+
+    Raises:
+        ValueError: 格式错误时抛出
+    """
+    if MCP_TOOL_ID_SEPARATOR not in mcp_tool_id:
+        raise ValueError(
+            f"无效的 MCP 工具 ID 格式: '{mcp_tool_id}'，期望格式为 '{{mcp_id}}{MCP_TOOL_ID_SEPARATOR}{{tool_name}}'"
+        )
+
+    parts = mcp_tool_id.split(MCP_TOOL_ID_SEPARATOR, 1)
+    return parts[0], parts[1]
+
+
+def format_mcp_tool_id(mcp_id: str, tool_name: str) -> str:
+    """
+    格式化 MCP 工具 ID
+
+    Args:
+        mcp_id: MCP 配置 ID
+        tool_name: 工具名称
+
+    Returns:
+        格式化的 MCP 工具 ID
+    """
+    return f"{mcp_id}{MCP_TOOL_ID_SEPARATOR}{tool_name}"
 
 
 class MCPConfigManager:
@@ -118,6 +238,75 @@ class MCPConfigManager:
             (config_id, MCPConfig) 列表
         """
         return [(cid, cfg) for cid, cfg in self._cache.items() if cfg.enabled]
+
+    def get_tool_definition(
+        self,
+        config_id: str,
+        tool_name: str,
+    ) -> MCPToolDefinition | None:
+        """
+        获取指定工具的定义
+
+        Args:
+            config_id: MCP 配置 ID
+            tool_name: 工具名称
+
+        Returns:
+            MCPToolDefinition 实例，不存在则返回 None
+        """
+        config = self._cache.get(config_id)
+        if not config:
+            return None
+        for tool in config.tools:
+            if tool.name == tool_name:
+                return tool
+        return None
+
+    def get_tool_by_mcp_tool_id(self, mcp_tool_id: str) -> tuple[MCPConfig, MCPToolDefinition] | None:
+        """
+        根据 MCP 工具 ID 获取对应的 MCP 配置和工具定义
+
+        Args:
+            mcp_tool_id: MCP 工具 ID，格式为 "{mcp_id} - {tool_name}"
+
+        Returns:
+            (MCPConfig, MCPToolDefinition) 元组，不存在则返回 None
+        """
+        try:
+            mcp_id, tool_name = parse_mcp_tool_id(mcp_tool_id)
+        except ValueError:
+            return None
+
+        config = self._cache.get(mcp_id)
+        if not config:
+            return None
+
+        for tool in config.tools:
+            if tool.name == tool_name:
+                return config, tool
+
+        return None
+
+    def list_all_tools(self) -> list[dict[str, Any]]:
+        """
+        列出所有 MCP 配置中的所有工具
+
+        Returns:
+            工具列表，每项包含 config_id, tool_name, 工具详情
+        """
+        result: list[dict[str, Any]] = []
+        for config_id, config in self._cache.items():
+            for tool in config.tools:
+                result.append(
+                    {
+                        "mcp_tool_id": format_mcp_tool_id(config_id, tool.name),
+                        "config_id": config_id,
+                        "tool_name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                )
+        return result
 
     def create_config(self, config_id: str, config: MCPConfig) -> tuple[bool, str]:
         """

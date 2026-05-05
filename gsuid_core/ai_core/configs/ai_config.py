@@ -56,7 +56,37 @@ AI_CONFIG: Dict[str, GSC] = {
         "网络搜索服务提供方",
         "指定网络搜索服务提供方",
         "Tavily",
-        options=["Tavily", "Exa", "MiniMax"],
+        options=["Tavily", "Exa", "MCP"],
+    ),
+    "image_understand_provider": GsStrConfig(
+        "图片理解服务提供方",
+        "指定图片理解服务提供方，当LLM模型不支持图片时，使用该服务将图片转述为文本",
+        "MCP",
+        options=["MCP"],
+    ),
+    "asr_provider": GsStrConfig(
+        "语音识别服务提供方",
+        "指定语音识别（ASR）服务提供方，用于将用户发送的语音消息转为文字",
+        "MCP",
+        options=["MCP"],
+    ),
+    "tts_provider": GsStrConfig(
+        "语音合成服务提供方",
+        "指定语音合成（TTS）服务提供方，用于将AI回复转为语音消息",
+        "MCP",
+        options=["MCP"],
+    ),
+    "video_understand_provider": GsStrConfig(
+        "视频理解服务提供方",
+        "指定视频理解服务提供方，用于从视频中提取关键帧并理解内容",
+        "MCP",
+        options=["MCP"],
+    ),
+    "document_extract_provider": GsStrConfig(
+        "文档提取服务提供方",
+        "指定文档内容提取服务提供方，用于将PDF/Word/Excel等文档转为文本",
+        "MCP",
+        options=["MCP"],
     ),
     "multi_agent_lenth": GsIntConfig(
         "最多允许AI思考轮数",

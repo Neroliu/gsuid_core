@@ -36,6 +36,12 @@ class GsIntConfig(GsConfig, tag=True):
     options: List[int] = []
 
 
+class GsFloatConfig(GsConfig, tag=True):
+    data: float
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+
+
 class GsImageConfig(GsConfig, tag=True):
     data: str
     upload_to: str
@@ -60,6 +66,7 @@ GSC = Union[
     GsListStrConfig,
     GsStrConfig,
     GsIntConfig,
+    GsFloatConfig,
     GsImageConfig,
     GsTimeRConfig,
     GsTimeConfig,

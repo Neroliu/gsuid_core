@@ -99,6 +99,14 @@ from gsuid_core.ai_core.buildin_tools.message_sender import (
     send_message_by_ai,
 )
 
+# Agent Mesh 工具 - 持久化 Agent 协作
+from gsuid_core.ai_core.buildin_tools.agent_mesh_tools import (
+    stop_agent_tool,
+    list_agents_tool,
+    send_agent_task_tool,
+    create_persistent_agent_tool,
+)
+
 # 命令执行工具 - 执行系统命令
 from gsuid_core.ai_core.buildin_tools.command_executor import execute_shell_command
 
@@ -156,4 +164,9 @@ __all__ = [
     # 动态工具发现
     "discover_tools",
     "list_available_tools",
+    # Agent Mesh 工具
+    "create_persistent_agent_tool",
+    "send_agent_task_tool",
+    "list_agents_tool",
+    "stop_agent_tool",
 ]

@@ -19,9 +19,19 @@ from pydantic_ai.tools import Tool
 from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start, on_core_shutdown
 from gsuid_core.ai_core.models import ToolBase, ToolContext
-from gsuid_core.ai_core.register import _TOOL_REGISTRY
 from gsuid_core.ai_core.mcp.client import MCPClient
 from gsuid_core.ai_core.mcp.config_manager import MCPConfig, mcp_config_manager
+
+# _TOOL_REGISTRY 使用延迟导入以避免循环导入
+# （register -> utils -> image_understand -> minimax_understand -> mcp -> startup -> register）
+
+
+def _get_tool_registry() -> dict:
+    """延迟导入 _TOOL_REGISTRY 以避免循环导入"""
+    from gsuid_core.ai_core.register import _TOOL_REGISTRY
+
+    return _TOOL_REGISTRY
+
 
 # 存储已注册的 MCP 客户端实例，用于关闭时清理
 _mcp_clients: Dict[str, MCPClient] = {}
@@ -133,11 +143,49 @@ def _build_mcp_tool_function(
     return mcp_tool_wrapper
 
 
+def _build_mcp_check_func(
+    config: MCPConfig,
+    tool_name: str,
+) -> Any:
+    """根据 MCPConfig 的 tool_permissions 为工具生成权限检查函数。
+
+    权限等级与 Event.user_pm 对比：
+    - pm=0: 仅 master 用户
+    - pm=1: superuser 及以上
+    - pm=2: 群主/管理员及以上
+    - pm=3: 所有用户（默认，不生成检查函数）
+
+    Args:
+        config: MCP 服务器配置
+        tool_name: MCP 工具名称
+
+    Returns:
+        权限检查函数，如果不需要权限检查则返回 None
+    """
+    required_pm = config.get_tool_required_pm(tool_name)
+
+    # required_pm >= 3 表示所有人可用，无需检查
+    if required_pm >= 3:
+        return None
+
+    async def _mcp_check_func(ev: Any) -> tuple[bool, str]:
+        """MCP 工具权限检查函数"""
+        if ev.user_pm > required_pm:
+            return False, (
+                f"❌ 权限不足：MCP 工具 '{tool_name}' 需要 pm<={required_pm}，当前用户权限等级为 {ev.user_pm}。"
+            )
+        return True, ""
+
+    _mcp_check_func.__name__ = f"_check_mcp_{tool_name}"
+    return _mcp_check_func
+
+
 def _register_mcp_tool(
     client: MCPClient,
     tool_name: str,
     tool_description: str,
     input_schema: dict[str, Any],
+    config: MCPConfig | None = None,
 ) -> None:
     """
     将单个 MCP 工具注册到 _TOOL_REGISTRY。
@@ -147,17 +195,28 @@ def _register_mcp_tool(
         tool_name: MCP 工具名称
         tool_description: MCP 工具描述
         input_schema: MCP 工具的输入参数 JSON Schema
+        config: MCP 服务器配置（用于权限检查）
     """
     # 使用 client.name 作为前缀避免工具名冲突
     registered_name = f"mcp_{client.name}_{tool_name}"
 
     # 检查是否已注册
-    if MCP_CATEGORY in _TOOL_REGISTRY and registered_name in _TOOL_REGISTRY[MCP_CATEGORY]:
+    tool_registry = _get_tool_registry()
+    if MCP_CATEGORY in tool_registry and registered_name in tool_registry[MCP_CATEGORY]:
         logger.debug(f"🔌 [MCP] 工具已注册，跳过: {registered_name}")
         return
 
     # 创建包装函数
     wrapper_func = _build_mcp_tool_function(client, tool_name, tool_description, input_schema)
+
+    # 根据 tool_permissions 生成权限检查函数
+    check_func = None
+    if config is not None:
+        check_func = _build_mcp_check_func(config, tool_name)
+        if check_func is not None:
+            logger.info(
+                f"🔒 [MCP] 工具 '{registered_name}' 已配置权限检查 (需要等级 {config.get_tool_required_pm(tool_name)})"
+            )
 
     # 创建 PydanticAI Tool 对象
     tool_obj = Tool(wrapper_func, takes_ctx=True)
@@ -168,11 +227,12 @@ def _register_mcp_tool(
         description=f"[MCP:{client.name}] {tool_description}",
         plugin=f"mcp_{client.name}",
         tool=tool_obj,
+        check_func=check_func,
     )
 
-    if MCP_CATEGORY not in _TOOL_REGISTRY:
-        _TOOL_REGISTRY[MCP_CATEGORY] = {}
-    _TOOL_REGISTRY[MCP_CATEGORY][registered_name] = tool_base
+    if MCP_CATEGORY not in tool_registry:
+        tool_registry[MCP_CATEGORY] = {}
+    tool_registry[MCP_CATEGORY][registered_name] = tool_base
 
     logger.info(f"🔌 [MCP] 注册工具: {registered_name} (来自 {client.name})")
 
@@ -212,6 +272,7 @@ async def _register_mcp_server(config_id: str, config: MCPConfig) -> int:
                 tool_info.name,
                 tool_info.description,
                 tool_info.input_schema,
+                config=config,
             )
             registered_count += 1
         except Exception as e:
@@ -230,7 +291,8 @@ async def unregister_mcp_server(config_id: str) -> int:
     Returns:
         移除的工具数量
     """
-    if MCP_CATEGORY not in _TOOL_REGISTRY:
+    tool_registry = _get_tool_registry()
+    if MCP_CATEGORY not in tool_registry:
         return 0
 
     # 找到该服务器注册的所有工具（通过 plugin 前缀匹配）
@@ -243,10 +305,10 @@ async def unregister_mcp_server(config_id: str) -> int:
         server_name = config.name
 
     plugin_prefix = f"mcp_{server_name}_"
-    tools_to_remove = [name for name in _TOOL_REGISTRY[MCP_CATEGORY] if name.startswith(plugin_prefix)]
+    tools_to_remove = [name for name in tool_registry[MCP_CATEGORY] if name.startswith(plugin_prefix)]
 
     for tool_name in tools_to_remove:
-        del _TOOL_REGISTRY[MCP_CATEGORY][tool_name]
+        del tool_registry[MCP_CATEGORY][tool_name]
         logger.info(f"🔌 [MCP] 注销工具: {tool_name}")
 
     # 清理客户端引用

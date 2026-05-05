@@ -86,6 +86,28 @@ class MCPClient:
             env=self.env if self.env else None,
         )
 
+    @staticmethod
+    def _truncate_args(arguments: dict[str, Any] | None, max_len: int = 100) -> dict[str, Any]:
+        """
+        截断参数中的长字符串值，避免 base64 等大段数据污染日志
+
+        Args:
+            arguments: 工具调用参数字典
+            max_len: 单个值的最大显示长度
+
+        Returns:
+            截断后的参数字典副本
+        """
+        if not arguments:
+            return {}
+        truncated: dict[str, Any] = {}
+        for key, value in arguments.items():
+            if isinstance(value, str) and len(value) > max_len:
+                truncated[key] = f"{value[:max_len]}...[截断, 总长={len(value)}]"
+            else:
+                truncated[key] = value
+        return truncated
+
     async def list_tools(self) -> list[MCPToolInfo]:
         """
         列出 MCP 服务器提供的所有工具
@@ -139,7 +161,9 @@ class MCPClient:
         transport = self._create_transport()
         client = Client(transport)
 
-        logger.info(f"🔌 [MCP][{self.name}] 调用工具: {tool_name}, 参数: {arguments}")
+        # 截断过长的参数值，避免 base64 等大段数据污染日志
+        truncated_args = self._truncate_args(arguments)
+        logger.info(f"🔌 [MCP][{self.name}] 调用工具: {tool_name}, 参数: {truncated_args}")
 
         async with client:
             result = await client.call_tool(

@@ -156,6 +156,35 @@ class MyData(BaseModel, table=True):
     name: str = Field(title="名称")
 ```
 
+### 3.1.1 SQLModel 表命名规范
+
+SQLModel **不使用** `__tablename__` 属性。表名由类名自动推导，规则为**全小写、无下划线**：
+
+```python
+# ✅ 正确：类名 AiMemeRecord → 表名 aimemerecord
+class AiMemeRecord(SQLModel, table=True):
+    meme_id: str = Field(primary_key=True)
+
+# ❌ 错误：不要使用 __tablename__
+class MemeRecord(SQLModel, table=True):
+    __tablename__ = "ai_meme_records"  # 禁止！
+```
+
+**命名示例**：
+
+| 类名 | 表名（自动推导） |
+|------|-----------------|
+| `AiMemeRecord` | `aimemerecord` |
+| `AIMemEpisode` | `aimemepisode` |
+| `CoreUser` | `coreuser` |
+| `AIScheduledTask` | `aischeduledtask` |
+
+**规则**：
+1. 类名使用 PascalCase（大驼峰）
+2. 表名自动为类名的全小写形式
+3. **禁止**使用 `__tablename__` 覆盖
+4. 如果需要自定义表名约束（如索引），使用 `__table_args__`
+
 ### 3.2 @with_session 装饰器的使用
 
 所有数据库类方法必须使用 `@with_session` 装饰器，它会自动：

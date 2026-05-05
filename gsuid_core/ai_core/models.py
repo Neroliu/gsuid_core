@@ -95,9 +95,18 @@ class ToolBase:
     description: str
     plugin: str  # 插件名称，core表示核心模块
     tool: "Tool[ToolContext]"
+    check_func: Any  # 可选的权限检查函数
 
-    def __init__(self, name: str, description: str, plugin: str, tool: "Tool[ToolContext]"):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        plugin: str,
+        tool: "Tool[ToolContext]",
+        check_func: Any = None,
+    ):
         self.name = name
         self.description = description
         self.plugin = plugin
         self.tool = tool
+        self.check_func = check_func

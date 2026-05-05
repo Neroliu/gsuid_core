@@ -73,6 +73,7 @@ core.py::main()
        │  │   ├── Persona初始化 (priority=0)                                    ││
        │  │   ├── Memory系统初始化 (priority=5)                                 ││
        │  │   ├── MCP工具注册 (priority=5)                                      ││
+       │  │   ├── 表情包模块初始化 (priority=5)                                  ││
        │  │   ├── AI统计初始化 (priority=10)                                    ││
        │  │   └── 定时任务初始化                                                ││
        │  └─────────────────────────────────────────────────────────────────────┘│
@@ -567,7 +568,8 @@ def on_core_shutdown(func=None, /, priority: int = 0):
 | `init_all` | `ai_core/rag/startup.py` | 0 | 初始化RAG模块（Embedding模型 + Qdrant客户端） |
 | `init_default_personas` | `ai_core/persona/startup.py` | 0 | 初始化默认角色（早柚） |
 | `init_memory_system` | `ai_core/memory/startup.py` | 5 | 初始化记忆系统（Qdrant Collection + IngestionWorker独立线程） |
-| `_on_start` | `ai_core/mcp/startup.py` | 5 | 注册 MCP 工具 |
+| `_on_start` | `ai_core/mcp/startup.py` | 5 | 注册 MCP 工具（读取 mcp_configs/*.json，连接服务器，注册到 _TOOL_REGISTRY["mcp"]）；支持 `register_as_ai_tools` 字段控制是否注册为 AI 工具 |
+| `init_meme_module` | `ai_core/meme/startup.py` | 5 | 初始化表情包模块（Qdrant Collection + 打标 Worker） |
 | `init_ai_core_statistics` | `ai_core/statistics/startup.py` | 10 | 初始化AI统计系统（HistoryManager清理 + Heartbeat巡检） |
 | `init_scheduled_tasks` | `ai_core/scheduled_task/startup.py` | 0 | 重新加载待执行定时任务 |
 
@@ -779,9 +781,10 @@ class _Bot:
 | 16 | **Persona初始化** (priority=0) | `ai_core/persona/startup.py::init_default_personas()` | 后台异步 |
 | 17 | **Memory系统初始化** (priority=5) | `ai_core/memory/startup.py::init_memory_system()` | 后台异步 |
 | 18 | **MCP工具注册** (priority=5) | `ai_core/mcp/startup.py::_on_start()` | 后台异步 |
-| 19 | **AI统计初始化** (priority=10) | `ai_core/statistics/startup.py::init_ai_core_statistics()` | 后台异步 |
-| 20 | **定时任务初始化** | `ai_core/scheduled_task/startup.py::init_scheduled_tasks()` | 后台异步 |
-| 21 | HTTP服务 (可选) | `core.py::sendMsg()` | 同步阻塞 |
+| 19 | **表情包模块初始化** (priority=5) | `ai_core/meme/startup.py::init_meme_module()` | 后台异步 |
+| 20 | **AI统计初始化** (priority=10) | `ai_core/statistics/startup.py::init_ai_core_statistics()` | 后台异步 |
+| 21 | **定时任务初始化** | `ai_core/scheduled_task/startup.py::init_scheduled_tasks()` | 后台异步 |
+| 22 | HTTP服务 (可选) | `core.py::sendMsg()` | 同步阻塞 |
 
 > **重要变更**: 启动钩子分为两个阶段：
 > 1. **`on_core_start_before`** — 在 WS 服务启动**之前**阻塞执行，用于数据库迁移、全局变量加载等必须在连接建立前完成的操作。
