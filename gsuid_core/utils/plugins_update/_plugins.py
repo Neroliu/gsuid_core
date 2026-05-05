@@ -354,17 +354,31 @@ async def get_local_plugins_list() -> Dict[str, Dict[str, str]]:
 
 
 async def get_plugins_url(name: str) -> Optional[Dict[str, str]]:
+    """获取插件的 URL 信息，支持大小写不敏感匹配。"""
     if not plugins_list:
         await refresh_list()
 
+    # 精确匹配（大小写敏感）
     if name in plugins_list:
         return plugins_list[name]
-    else:
-        for _n in plugins_list:
-            if name.lower() in _n:
-                return plugins_list[_n]
-        else:
-            return None
+
+    # 大小写不敏感匹配
+    name_lower = name.lower()
+    for _n in plugins_list:
+        if name_lower == _n.lower():
+            return plugins_list[_n]
+
+    # 包含匹配（大小写敏感）
+    for _n in plugins_list:
+        if name in _n:
+            return plugins_list[_n]
+
+    # 包含匹配（大小写不敏感）
+    for _n in plugins_list:
+        if name_lower in _n.lower():
+            return plugins_list[_n]
+
+    return None
 
 
 async def install_plugins(plugins: Dict[str, str]) -> str:

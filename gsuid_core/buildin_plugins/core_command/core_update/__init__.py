@@ -145,6 +145,7 @@ async def send_core_all_update_msg(bot: Bot, ev: Event):
     else:
         level = 0
 
+    await bot.send("🔔 正在尝试更新本体 + 全部插件, 请稍等片刻。")
     log_list = await update_from_git_async(min(level, 1))
     log_list.extend(await update_all_plugins(level))
     await bot.send(log_list)

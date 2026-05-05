@@ -245,6 +245,9 @@ def build_mirror_url(original_url: str, prefix: str) -> Optional[str]:
     - 代理前缀模式 (ghproxy): {prefix}{full_github_url}
     - SSH 模式: ssh://git@ssh.github.com:443/{owner}/{repo}.git
 
+    注意：对于代理模式，如果原始 URL 是镜像 URL（如 cnb/gitcode），
+    则需要通过 _extract_owner_repo 从 URL 中解析出正确的 owner/repo。
+
     Args:
         original_url: 原始 git remote URL
         prefix: 镜像源/代理前缀，或 "ssh://" 表示 SSH 模式
@@ -266,11 +269,18 @@ def build_mirror_url(original_url: str, prefix: str) -> Optional[str]:
         # 代理前缀模式：需要完整的 GitHub URL
         github_url = _extract_github_url(original_url)
         if not github_url:
-            # 如果原始 URL 不是 GitHub URL，尝试用仓库名构造
-            repo_name = _extract_repo_name(original_url)
-            if not repo_name:
-                return None
-            github_url = f"{GITHUB_PREFIX}gscore-mirror/{repo_name}"
+            # 如果无法提取 GitHub URL（如当前 URL 是镜像 URL），
+            # 则从 URL 中提取 owner/repo 来构造 GitHub URL
+            owner_repo = _extract_owner_repo(original_url)
+            if not owner_repo:
+                repo_name = _extract_repo_name(original_url)
+                if not repo_name:
+                    return None
+                # 无法确定 owner，使用 gscore-mirror 作为默认值
+                github_url = f"{GITHUB_PREFIX}gscore-mirror/{repo_name}"
+            else:
+                owner, repo = owner_repo
+                github_url = f"{GITHUB_PREFIX}{owner}/{repo}"
         return f"{clean_prefix}{github_url}"
     else:
         # 镜像模式：只需要仓库名
@@ -364,6 +374,12 @@ async def set_plugin_mirror(
     """
     将单个插件的 git remote URL 切换到指定镜像源/代理/SSH。
 
+    核心原则：始终使用插件商城中的原始 GitHub URL（作者/repo）来构建目标 URL，
+    而不是依赖当前存储的 URL。这样可以确保：
+    1. 无论当前 URL 是什么格式（镜像/代理），都能正确切换
+    2. 镜像模式使用正确的 {prefix}/{repo_name} 格式
+    3. 代理模式使用正确的 {prefix}{full_github_url} 格式
+
     Args:
         plugin_path: 插件目录路径
         prefix: 镜像源/代理前缀，"ssh://" 表示 SSH 模式，空字符串表示恢复为 GitHub 原始地址
@@ -378,7 +394,7 @@ async def set_plugin_mirror(
     if current_url is None:
         return False, f"{plugin_name}: 非 git 仓库或无 origin remote"
 
-    # 获取原始 GitHub URL（用于构建目标 URL 的基础）
+    # 始终从插件商城获取原始 GitHub URL（这是正确的作者/repo 来源）
     original_github = await _get_original_github_url(plugin_name)
 
     if not prefix:
@@ -396,8 +412,9 @@ async def set_plugin_mirror(
 
             new_url = f"{GITHUB_PREFIX}gscore-mirror/{repo_name}"
     else:
-        # 使用原始 GitHub URL 作为基础来构建目标 URL
-        # 这样从镜像 URL 切换到代理/SSH 时也能正确工作
+        # 关键修复：始终使用插件商城的原始 GitHub URL 作为基础
+        # 而不是当前 URL（可能是镜像 URL 或错误的 URL）
+        # 这样确保无论用户之前如何切换，都能正确构建目标 URL
         base_url = original_github if original_github else current_url
         new_url = build_mirror_url(base_url, prefix)
         if not new_url:
