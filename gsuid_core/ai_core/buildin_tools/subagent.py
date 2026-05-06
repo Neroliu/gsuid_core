@@ -20,7 +20,7 @@ _SUBAGENT_MAX_ITERATIONS = 3
 async def create_subagent(
     ctx: RunContext[ToolContext],
     task: str,
-    max_tokens: int = 10000,
+    max_tokens: int = 35000,
     max_iterations: int = 15,  # 规划+执行通常需要较多轮次
 ) -> str:
     """

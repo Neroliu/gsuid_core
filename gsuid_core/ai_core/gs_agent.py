@@ -168,7 +168,7 @@ class GsCoreAIAgent:
         self,
         openai_chat_model: Optional[OpenAIChatModel] = None,
         system_prompt: Optional[str] = None,
-        max_tokens: int = 20000,
+        max_tokens: int = 30000,
         max_iterations: Optional[int] = None,
         persona_name: Optional[str] = None,
         max_history: int = 20,
@@ -621,7 +621,7 @@ class GsCoreAIAgent:
 # 工厂函数
 def create_agent(
     system_prompt: Optional[str] = None,
-    max_tokens: int = 20000,
+    max_tokens: int = 30000,
     max_iterations: Optional[int] = None,
     persona_name: Optional[str] = None,
     create_by: str = "LLM",

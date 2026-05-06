@@ -322,7 +322,7 @@ async def _call_tag_agent(
     # 创建临时 Agent（无工具，纯文本+图片分析）
     agent = create_agent(
         system_prompt=TAG_PROMPT,
-        max_tokens=500,
+        max_tokens=21000,
         max_iterations=1,
         create_by="MemeTagger",
         task_level="low",

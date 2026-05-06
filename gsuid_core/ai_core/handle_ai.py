@@ -45,8 +45,8 @@ enable_ai: bool = ai_config.get_config("enable").data
 history_manager = get_history_manager()
 
 # 双层长度防护配置
-ABSOLUTE_MAX_LENGTH = 14000  # 绝对上限：超过此长度直接截断，防止子Agent Token爆炸
-MAX_SUMMARY_LENGTH = 8000  # 摘要阈值：超过此长度调用子Agent进行智能摘要（调整至8000避免短文本被过度摘要）
+ABSOLUTE_MAX_LENGTH = 60000  # 绝对上限：超过此长度直接截断，防止子Agent Token爆炸
+MAX_SUMMARY_LENGTH = 15000  # 摘要阈值：超过此长度调用子Agent进行智能摘要（调整至8000避免短文本被过度摘要）
 
 # AI并发控制配置
 MAX_CONCURRENT_AI_CALLS = 10  # 全局最大并发AI调用数
@@ -150,7 +150,7 @@ async def handle_ai_chat(bot: Bot, event: Event):
                 summarized = await create_subagent(
                     ctx=None,  # type: ignore
                     task=f"请总结以下用户输入，保留关键信息：\n\n{event.raw_text}",
-                    max_tokens=500,
+                    max_tokens=18000,
                 )
                 # 保留上下文头（第一个元素），只替换正文部分
                 if isinstance(user_messages, list) and len(user_messages) > 0 and isinstance(user_messages[0], str):
