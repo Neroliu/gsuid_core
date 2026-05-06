@@ -621,7 +621,7 @@ def history_to_prompt(
                 user_name=record.user_name or "",
             )
             lines.append(line)
-        return "\n".join(lines)
+        return str("\n".join(lines))
 
     # 默认格式
     role_display = {
@@ -642,7 +642,7 @@ def history_to_prompt(
             role_label = role_display.get(record.role, f"[{record.role}]")
             lines.append(f"{role_label}: {record.content}")
 
-    return "\n".join(lines)
+    return str("\n".join(lines))
 
 
 def history_to_messages(
@@ -850,7 +850,17 @@ def format_history_for_agent(
             continue
 
         if record.role == "assistant":
-            label = "AI"
+            # Fix-04: AI 回复增加回复对象标签
+            reply_to = None
+            reply_name = None
+            if record.metadata:
+                reply_to = record.metadata.get("reply_to_user_id")
+                reply_name = record.metadata.get("reply_to_user_name")
+            if reply_to:
+                target = f"{reply_to}({reply_name})" if reply_name else reply_to
+                label = f"AI→{target}"
+            else:
+                label = "AI"
         else:
             label = _user_label(record.user_id, record.user_name)
 

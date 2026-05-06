@@ -89,10 +89,10 @@ class MemoryContext:
             )
             parts.append(f"【历史对话片段】\n{hist_text if hist_text else '暂无历史对话'}")
 
-        result = "\n\n".join(parts)
+        result = str("\n\n".join(parts))
         if len(result) > max_chars:
             result = result[:max_chars] + "\n...[记忆已截断]"
-        return result
+        return str(result)
 
     def to_memory_text(self, max_chars: int = 24000) -> str:
         """格式化为可注入 Memory 的记忆上下文文本"""
@@ -103,10 +103,10 @@ class MemoryContext:
             facts_text = "\n".join(f"• {e['fact']}" for e in self.edges[: memory_config.search_edge_count])
             parts.append(f"【已知事实】\n{facts_text if facts_text else '暂无已知事实'}")
 
-        result = "\n\n".join(parts)
+        result = str("\n\n".join(parts))
         if len(result) > max_chars:
             result = result[:max_chars] + "\n...[记忆已截断]"
-        return result
+        return str(result)
 
 
 def _merge_episodes(list_a: Sequence[Episode], list_b: Sequence[Episode]) -> list[Episode]:

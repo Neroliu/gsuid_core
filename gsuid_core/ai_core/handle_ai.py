@@ -13,6 +13,7 @@ AI聊天处理模块
 """
 
 import asyncio
+from typing import Optional
 from datetime import datetime
 
 # 导入表情包模块以注册 on_core_start 钩子和 @ai_tools
@@ -28,8 +29,9 @@ from gsuid_core.ai_core.ai_router import (
 )
 from gsuid_core.ai_core.classifier import classifier_service
 from gsuid_core.ai_core.statistics import statistics_manager
-from gsuid_core.ai_core.persona.mood import update_mood
+from gsuid_core.ai_core.persona.mood import update_mood, get_mood_description
 from gsuid_core.ai_core.memory.config import memory_config
+from gsuid_core.ai_core.database.models import UserFavorability
 from gsuid_core.ai_core.configs.ai_config import ai_config
 from gsuid_core.ai_core.buildin_tools.subagent import create_subagent
 from gsuid_core.ai_core.memory.retrieval.dual_route import dual_route_retrieve
@@ -77,14 +79,6 @@ async def handle_ai_chat(bot: Bot, event: Event):
 
     async with _ai_semaphore:
         try:
-            # 异步采集群聊图片到表情包库（不阻塞主流程）
-            try:
-                from gsuid_core.ai_core.meme.observer import observe_message_for_memes
-
-                asyncio.create_task(observe_message_for_memes(event, ""))
-            except ImportError:
-                pass  # meme 模块未加载
-
             query = event.raw_text
 
             # ============================================================
@@ -127,16 +121,29 @@ async def handle_ai_chat(bot: Bot, event: Event):
             session = await get_ai_session(event)
 
             # ============================================================
-            # 步骤 4: 准备用户消息
+            # 步骤 4: 准备用户消息（含好感度注入）
             # ============================================================
-            user_messages = await prepare_content_payload(event)
 
-            # 运行时注入当前时间
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-            if isinstance(user_messages, list) and len(user_messages) > 0 and isinstance(user_messages[0], str):
-                user_messages[0] += f"\n\n【当前时间】{current_time}"
+            # 查询当前用户好感度（从外部存储，非模型推断）
+            favorability: Optional[int] = None
+            try:
+                bot_id = getattr(bot, "bot_id", "") if bot else ""
+                user_data = await UserFavorability.get_user_favorability(
+                    user_id=str(event.user_id),
+                    bot_id=bot_id,
+                )
+                if user_data:
+                    favorability = user_data.favorability
+            except Exception as e:
+                logger.debug(f"🧠 [GsCore][AI] 好感度查询失败，降级为无注入: {e}")
+
+            user_messages = await prepare_content_payload(
+                event,
+                favorability=favorability,
+            )
 
             # 第二层：智能摘要（在安全范围内对长文本进行摘要）
+            # Bug-03修复：摘要时保留上下文头，只替换正文部分
             if len(event.raw_text) > MAX_SUMMARY_LENGTH:
                 logger.info(f"🧠 [GsCore][AI] 检测到长文本 ({len(event.raw_text)} 字符)，开始摘要...")
 
@@ -145,8 +152,21 @@ async def handle_ai_chat(bot: Bot, event: Event):
                     task=f"请总结以下用户输入，保留关键信息：\n\n{event.raw_text}",
                     max_tokens=500,
                 )
-                user_messages = summarized
+                # 保留上下文头（第一个元素），只替换正文部分
+                if isinstance(user_messages, list) and len(user_messages) > 0 and isinstance(user_messages[0], str):
+                    # 提取上下文头（--- 消息 ---\n 之前的部分）
+                    header_end = user_messages[0].find("--- 消息 ---\n")
+                    if header_end != -1:
+                        header = user_messages[0][: header_end + len("--- 消息 ---\n")]
+                        user_messages[0] = header + summarized + "\n[注：原始消息已摘要]"
+                    else:
+                        user_messages[0] = summarized
                 logger.info(f"🧠 [GsCore][AI] 摘要完成，摘要长度: {len(summarized)} 字符")
+
+            # Bug-04修复：时间注入移到摘要之后（无论是否摘要都需要）
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+            if isinstance(user_messages, list) and len(user_messages) > 0 and isinstance(user_messages[0], str):
+                user_messages[0] += f"\n【当前时间】{current_time}"
 
             # ============================================================
             # 步骤 5: 记忆上下文（Memory Retrieval）
@@ -191,11 +211,32 @@ async def handle_ai_chat(bot: Bot, event: Event):
             # 排除最后一条（当前用户刚发的消息），避免与 user_messages 重复
             history = raw_history[:-1] if raw_history else []
 
+            # ============================================================
+            # Fix-06: 当前用户优先的历史窗口过滤
+            # 保证当前用户的最近消息一定在窗口内
+            # ============================================================
+            if history:
+                current_user_id = str(event.user_id)
+                CURRENT_USER_MIN_RECORDS = 5  # 当前用户至少保留5条
+                MAX_OTHER_RECORDS = 15  # 其他用户最多保留15条
+
+                current_user_records = [r for r in history if r.user_id == current_user_id]
+                other_records = [r for r in history if r.user_id != current_user_id]
+
+                # 保留当前用户最近 N 条 + 其他用户最近 M 条，按时间戳重新排序
+                selected_current = current_user_records[-CURRENT_USER_MIN_RECORDS:]
+                selected_other = other_records[-MAX_OTHER_RECORDS:]
+
+                # 合并并按时间排序
+                combined = sorted(selected_current + selected_other, key=lambda r: r.timestamp)
+                history = combined
+
             # 格式化历史记录为Agent可用的上下文格式
+            # Bug-05修复: current_user_id 统一 str() 转换，避免类型不一致导致比较失效
             if history:
                 history_context = format_history_for_agent(
                     history=history,
-                    current_user_id=event.user_id,
+                    current_user_id=str(event.user_id),
                     current_user_name=event.sender.get("nickname") if event.sender else None,
                 )
 
@@ -203,11 +244,28 @@ async def handle_ai_chat(bot: Bot, event: Event):
                     rag_context = f"【历史对话】\n{history_context}\n"
                     logger.debug(f"🧠 [GsCore][AI] 已加载 {len(history)} 条历史消息")
 
-            # 合并记忆上下文到 rag_context
+            # ============================================================
+            # Fix-03: 获取当前情绪状态描述并注入上下文
+            # ============================================================
+            mood_key = str(event.group_id) if event.group_id else str(event.user_id)
+            mood_desc = ""
+            if session.persona_name:
+                try:
+                    mood_desc = await get_mood_description(session.persona_name, mood_key)
+                except Exception as e:
+                    logger.debug(f"🎭 [Mood] 情绪描述获取失败: {e}")
+
+            # 组装完整上下文
+            context_parts = []
+            if rag_context:
+                context_parts.append(rag_context)
+            # Prompt-2.5: 用括号包裹情绪状态，暗示这是内心状态而非对话指令
+            if mood_desc:
+                context_parts.append(f"（{mood_desc}。）")
             if memory_context_text:
-                full_context = f"{rag_context}\n【长期记忆】\n{memory_context_text}\n"
-            else:
-                full_context = f"{rag_context}"
+                context_parts.append(f"【长期记忆】\n{memory_context_text}")
+
+            full_context = "\n\n".join(context_parts)
 
             # ============================================================
             # 步骤 7: 调用 Agent 生成回复

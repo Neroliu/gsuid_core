@@ -107,9 +107,34 @@ def _normalize_image_url(raw: str) -> str:
     return f"data:image/png;base64,{raw}"
 
 
+def _build_relationship_description(
+    favorability: Optional[int],
+    user_name: Optional[str],
+    user_id: str,
+) -> str:
+    """将好感度转换为有温度的关系描述，而非机械的区间标签"""
+    name = user_name or user_id
+
+    if favorability is None:
+        return f"{name} 找你说话了。"
+
+    if favorability < 0:
+        return f"{name} 又来了。"
+    elif favorability < 20:
+        return f"{name} 来找你了，你们不太熟。"
+    elif favorability < 50:
+        return f"{name} 找你说话，见过几次面的那种。"
+    elif favorability < 75:
+        return f"{name} 找你了，算是熟人了。"
+    else:
+        return f"{name} 找你说话了，你们挺熟的。"
+
+
 async def prepare_content_payload(
     ev: Event,
     task_level: Literal["high", "low"] = "high",
+    favorability: Optional[int] = None,
+    favorability_zone: Optional[str] = None,
 ) -> Sequence[UserContent]:
     """
     准备消息内容列表给AI看, 包含文本、图片ID、文件内容、事件对象
@@ -121,13 +146,31 @@ async def prepare_content_payload(
     Args:
         ev: 事件对象
         task_level: 任务级别
+        favorability: 当前用户好感度 (可选)
+        favorability_zone: 好感度区间描述 (可选)
 
     Returns:
         content payload 列表（可能包含 ImageUrl，由 _execute_run 自动处理）
     """
     content_payload: list[UserContent] = []
-    text = f"--- 当前用户ID: {getattr(ev, 'user_id', 'unknown')} ---\n"
 
+    # 获取用户昵称
+    nickname = None
+    if ev.sender:
+        nickname = ev.sender.get("nickname") or ev.sender.get("card") or None
+
+    # 叙事性关系描述（Bug-01 + Prompt-2.2: 替代数字+区间标签）
+    relationship_desc = _build_relationship_description(favorability, nickname, str(ev.user_id))
+    current_turn_header = f"{relationship_desc}\n"
+
+    # @状态：只在被@时才注入（潜在-01: 修正 is_at_me → is_tome）
+    is_at_me = getattr(ev, "is_tome", False) or (ev.user_type == "direct")
+    if is_at_me:
+        current_turn_header += "（直接找你说的）\n"
+
+    current_turn_header += "--- 消息 ---\n"
+
+    text = current_turn_header
     if not ev.text:
         text += "用户没有发送文本内容。"
     else:
@@ -139,8 +182,6 @@ async def prepare_content_payload(
 
     for at in ev.at_list:
         text += f"\n--- 提及用户(@用户): {at} ---\n"
-
-    text += f"\n--- 当前群ID: {getattr(ev, 'group_id', 'unknown')} ---\n"
 
     content_payload.append(text)
 

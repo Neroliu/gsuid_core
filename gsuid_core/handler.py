@@ -102,6 +102,11 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
             metadata=metadata,
         )
 
+        # ====== Meme Observer Hook ======
+        from gsuid_core.ai_core.meme.observer import observe_message_for_memes
+
+        asyncio.create_task(observe_message_for_memes(event, ""))
+
         # ====== Memory Observer Hook ======
         if enable_ai and event.raw_text and event.raw_text.strip():
             is_enable_memory: bool = ai_config.get_config("enable_memory").data
@@ -119,20 +124,17 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
             if persona_name is None and memory_session == "按人格配置":
                 pass
             else:
-                try:
-                    if is_enable_memory and memory_config.observer_enabled and "被动感知" in memory_mode:
-                        asyncio.create_task(
-                            observe(
-                                content=event.raw_text,
-                                speaker_id=str(event.user_id),
-                                group_id=str(event.group_id or event.user_id),
-                                bot_self_id=str(event.bot_self_id),
-                                observer_blacklist=memory_config.observer_blacklist,
-                                message_type="group_msg" if event.group_id else "private_msg",
-                            )
+                if is_enable_memory and memory_config.observer_enabled and "被动感知" in memory_mode:
+                    asyncio.create_task(
+                        observe(
+                            content=event.raw_text,
+                            speaker_id=str(event.user_id),
+                            group_id=str(event.group_id or event.user_id),
+                            bot_self_id=str(event.bot_self_id),
+                            observer_blacklist=memory_config.observer_blacklist,
+                            message_type="group_msg" if event.group_id else "private_msg",
                         )
-                except Exception:
-                    pass  # Observer 失败不应影响主流程
+                    )
         # ============================================
 
     if event.user_pm == 0:

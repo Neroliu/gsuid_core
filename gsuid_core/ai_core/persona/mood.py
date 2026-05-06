@@ -37,16 +37,16 @@ class MoodType(str, Enum):
     ANNOYED = "annoyed"  # 烦躁/不满
 
 
-# 情绪类型 -> 中文描述映射
+# 情绪类型 -> 中文描述映射 (Prompt-2.5: 改为第一人称内心状态)
 MOOD_DESCRIPTIONS: Dict[MoodType, str] = {
-    MoodType.NEUTRAL: "心情平静，状态正常",
-    MoodType.HAPPY: "心情不错，语气轻快愉悦",
-    MoodType.EXCITED: "非常兴奋，充满热情和活力",
-    MoodType.WARM: "感到温暖，语气亲切柔和",
-    MoodType.COLD: "有些冷淡，回复简短克制",
-    MoodType.CONCERNED: "感到关切，语气认真体贴",
-    MoodType.SAD: "有些难过，语气低落",
-    MoodType.ANNOYED: "有些烦躁，语气不太耐烦",
+    MoodType.NEUTRAL: "",  # 中性不注入，保持角色默认状态
+    MoodType.HAPPY: "刚刚发生了点开心的事，心情比平时好一点",
+    MoodType.EXCITED: "有件事让你觉得挺有意思的，有点停不下来",
+    MoodType.WARM: "对方说的话让你感觉还不错",
+    MoodType.COLD: "最近有点不想说话",
+    MoodType.CONCERNED: "有点担心",
+    MoodType.SAD: "有点心情不好，不想多说",
+    MoodType.ANNOYED: "被烦到了，耐心有限",
 }
 
 # 情绪衰减时间常数（秒）：情绪强度每经过此时间衰减一半
