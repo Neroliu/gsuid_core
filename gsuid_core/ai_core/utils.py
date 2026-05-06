@@ -16,6 +16,9 @@ from gsuid_core.utils.resource_manager import RM
 
 
 def extract_json_from_text(raw_text: str) -> dict:
+    if not raw_text or not raw_text.strip():
+        raise ValueError("Empty input text for JSON extraction")
+
     cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw_text).strip()
     cleaned = repair_json(cleaned)
     try:

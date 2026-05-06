@@ -68,7 +68,12 @@ class MemeFilter:
             logger.debug(f"[Meme] 文件过大: {len(image_data)} > {max_bytes}")
             return False
 
-        # 3. 最小尺寸检查
+        # 3. 最大尺寸检查（表情包不应该太大）
+        if width > 512 or height > 512:
+            logger.debug(f"[Meme] 尺寸过大，不是表情包: {width}x{height}")
+            return False
+
+        # 4. 最小尺寸检查
         from gsuid_core.ai_core.meme.config import MEME_MIN_WIDTH, MEME_MIN_HEIGHT
 
         min_width = MEME_MIN_WIDTH
@@ -77,7 +82,7 @@ class MemeFilter:
             logger.debug(f"[Meme] 尺寸过小: {width}x{height} < {min_width}x{min_height}")
             return False
 
-        # 4. 每日每群采集上限检查
+        # 5. 每日每群采集上限检查
         from gsuid_core.ai_core.meme.config import MEME_DAILY_COLLECT_LIMIT
 
         daily_limit: int = MEME_DAILY_COLLECT_LIMIT
@@ -89,7 +94,7 @@ class MemeFilter:
                 logger.debug(f"[Meme] 群 {source_group} 今日采集已达上限: {today_count}")
                 return False
 
-        # 5. 磁盘空间检查（剩余 < 200MB 则停止采集）
+        # 6. 磁盘空间检查（剩余 < 200MB 则停止采集）
         try:
             usage = shutil.disk_usage(str(get_memes_base_path()))
             free_mb = usage.free / (1024 * 1024)

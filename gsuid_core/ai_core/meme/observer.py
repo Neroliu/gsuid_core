@@ -6,14 +6,19 @@ MemeObserver 接入 handle_ai.py 消息预处理，
 
 import io
 import asyncio
-from typing import List, Optional
+from typing import Set, List, Optional
 
 import httpx
 from PIL import Image
 
 from gsuid_core.pool import to_thread
+from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.ai_core.meme.config import meme_config
+
+# URL 去重集合（已处理的URL不再下载）
+_processed_urls: Set[str] = set()
+_processed_lock = asyncio.Lock()
 
 
 def _extract_image_urls(ev: Event) -> List[str]:
@@ -32,6 +37,8 @@ def _extract_image_urls(ev: Event) -> List[str]:
             # segment.data 可能是 "link://http://..." 或 "base64://..."
             if segment.data.startswith("link://"):
                 image_urls.append(segment.data[7:])
+            elif segment.data.startswith(("http://", "https://")):
+                image_urls.append(segment.data)
             # base64 图片不处理（无法下载）
 
     return image_urls
@@ -46,33 +53,31 @@ async def _download_image(url: str) -> Optional[tuple[bytes, str]]:
     Returns:
         (图片数据, MIME 类型) 或 None
     """
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url)
-            if response.status_code != 200:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        logger.debug(f"[Meme] 开始下载图片: {url}")
+        response = await client.get(url)
+        if response.status_code != 200:
+            logger.debug(f"[Meme] 图片下载失败: {url}")
+            return None
+
+        content_type = response.headers.get("content-type", "")
+        # 提取 MIME 类型
+        mime = content_type.split(";")[0].strip().lower()
+        if not mime.startswith("image/"):
+            # 尝试从 URL 推断
+            url_lower = url.lower()
+            if url_lower.endswith((".jpg", ".jpeg")):
+                mime = "image/jpeg"
+            elif url_lower.endswith(".png"):
+                mime = "image/png"
+            elif url_lower.endswith(".gif"):
+                mime = "image/gif"
+            elif url_lower.endswith(".webp"):
+                mime = "image/webp"
+            else:
                 return None
 
-            content_type = response.headers.get("content-type", "")
-            # 提取 MIME 类型
-            mime = content_type.split(";")[0].strip().lower()
-            if not mime.startswith("image/"):
-                # 尝试从 URL 推断
-                url_lower = url.lower()
-                if url_lower.endswith((".jpg", ".jpeg")):
-                    mime = "image/jpeg"
-                elif url_lower.endswith(".png"):
-                    mime = "image/png"
-                elif url_lower.endswith(".gif"):
-                    mime = "image/gif"
-                elif url_lower.endswith(".webp"):
-                    mime = "image/webp"
-                else:
-                    return None
-
-            return response.content, mime
-
-    except httpx.HTTPError:
-        return None
+        return response.content, mime
 
 
 @to_thread
@@ -89,7 +94,10 @@ def _get_image_dimensions(image_data: bytes) -> tuple[int, int]:
     return img.size
 
 
-async def observe_message_for_memes(ev: Event, persona_name: str) -> None:
+async def observe_message_for_memes(
+    ev: Event,
+    persona_name: str,
+) -> None:
     """监听消息中的图片并异步入队
 
     此函数在 handle_ai.py 的消息预处理阶段调用，
@@ -109,19 +117,21 @@ async def observe_message_for_memes(ev: Event, persona_name: str) -> None:
     if not ev.group_id:
         return
 
+    logger.trace(f"[Meme] 观察消息: 群: {ev.group_id}, 用户: {ev.user_id}")
+
     # 提取图片 URL
     image_urls = _extract_image_urls(ev)
     if not image_urls:
+        logger.trace("[Meme] 消息中未找到图片 URL! 跳过处理")
         return
 
     # 限制每次最多处理 5 张图片
+    logger.info(f"[Meme] 发现 {len(image_urls)} 张图片，准备处理（最多5张）")
     for url in image_urls[:5]:
-        asyncio.create_task(
-            _process_image(
-                url=url,
-                source_group=ev.group_id,
-                source_user=ev.user_id,
-            )
+        await _process_image(
+            url=url,
+            source_group=ev.group_id,
+            source_user=ev.user_id,
         )
 
 
@@ -139,15 +149,25 @@ async def _process_image(
     """
     from gsuid_core.ai_core.meme.filter import MemeFilter
 
+    # URL 去重检查
+    async with _processed_lock:
+        if url in _processed_urls:
+            logger.debug(f"[Meme] URL 已处理过，跳过: {url}")
+            return
+        _processed_urls.add(url)
+
     # 下载图片
     result = await _download_image(url)
     if result is None:
+        async with _processed_lock:
+            _processed_urls.discard(url)
         return
 
     image_data, file_mime = result
 
     # 获取图片尺寸（通过 to_thread 异步化）
     width, height = await _get_image_dimensions(image_data)
+    logger.info(f"[Meme] 下载图片成功，URL: {url}, MIME: {file_mime}, 尺寸: {width}x{height}")
 
     # 入队过滤
     await MemeFilter.enqueue(
