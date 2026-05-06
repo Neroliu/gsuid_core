@@ -40,6 +40,34 @@ from gsuid_core.ai_core.configs.ai_config import ai_config
 _T = TypeVar("_T")
 
 
+def _truncate_message_for_log(msg: Any, max_base64_len: int = 100) -> Any:
+    """
+    截断消息中的长 base64 数据，用于日志输出。
+
+    Args:
+        msg: 消息内容，可能是 str、ImageUrl 或其列表
+        max_base64_len: base64 数据最大显示长度
+
+    Returns:
+        截断后的消息副本
+    """
+    from pydantic_ai.messages import ImageUrl
+
+    if isinstance(msg, str):
+        # 检查是否是 base64 DataURI
+        if ";base64," in msg and len(msg) > max_base64_len:
+            return f"{msg[:max_base64_len]}...[base64截断, 总长={len(msg)}]"
+        return msg
+    elif isinstance(msg, ImageUrl):
+        url = msg.url
+        if ";base64," in url and len(url) > max_base64_len:
+            return ImageUrl(url=f"{url[:max_base64_len]}...[base64截断, 总长={len(url)}]")
+        return msg
+    elif isinstance(msg, list):
+        return [_truncate_message_for_log(item, max_base64_len) for item in msg]
+    return msg
+
+
 def _truncate_history_with_tool_safety(
     history: List[ModelMessage],
     max_history: int,
@@ -308,7 +336,9 @@ class GsCoreAIAgent:
                 final_user_message.append(f"\n\n{rag_context}")
             logger.info("🧠[GsCoreAIAgent] 已添加 RAG 上下文")
 
-        logger.trace(f"🧠[GsCoreAIAgent] 用户消息: {final_user_message}")
+        # 截断日志输出中的 base64 数据，避免日志过长
+        truncated_msg = _truncate_message_for_log(final_user_message)
+        logger.trace(f"🧠[GsCoreAIAgent] 用户消息: {truncated_msg}")
 
         if tools is None:
             tools = []

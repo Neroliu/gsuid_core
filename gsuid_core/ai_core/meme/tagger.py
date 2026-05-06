@@ -39,6 +39,7 @@ TAG_PROMPT = """你是一个图片分析助手。请分析这张图片并返回 
 
 请返回以下格式的 JSON（不要包含其他内容）：
 {
+    "is_meme": true,
     "description": "简短描述图片内容（20字以内）",
     "emotion_tags": ["情绪标签1", "情绪标签2"],
     "scene_tags": ["场景标签1", "场景标签2"],
@@ -47,6 +48,7 @@ TAG_PROMPT = """你是一个图片分析助手。请分析这张图片并返回 
 }
 
 字段说明：
+- is_meme: 是否为表情包（带文字/配文的图片、表情包、梗图等）, 如果是普通照片/风景/人物写真/截图/二次元/美女等内容填false
 - description: 图片内容的简短描述
 - emotion_tags: 情绪标签列表，如 "开心", "无语", "搞笑", "可爱", "愤怒", "悲伤", "惊讶", "尴尬", "得意", "委屈"
 - scene_tags: 场景标签列表，如 "日常", "吐槽", "卖萌", "怼人", "安慰", "庆祝", "晚安", "早安"
@@ -265,6 +267,12 @@ async def _tag_single(meme_id: str) -> None:
         await MemeLibrary.mark_rejected(meme_id, tag_result["nsfw_score"])
         return
 
+    # 非表情包检查
+    if not tag_result["is_meme"]:
+        logger.info(f"[Meme] 不是表情包，标记为 rejected: {meme_id}")
+        await MemeLibrary.mark_rejected(meme_id, 0.0)
+        return
+
     # 更新标签
     persona_hint = tag_result["persona_hint"]
     # 确定目标文件夹
@@ -341,6 +349,7 @@ async def _call_tag_agent(
 
     # 确保字段类型正确
     return {
+        "is_meme": bool(parsed.get("is_meme", True)),
         "description": str(parsed.get("description", "")),
         "emotion_tags": list(parsed.get("emotion_tags", [])),
         "scene_tags": list(parsed.get("scene_tags", [])),

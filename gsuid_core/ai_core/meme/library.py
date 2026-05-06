@@ -272,7 +272,12 @@ class MemeLibrary:
 
     @staticmethod
     async def mark_rejected(meme_id: str, nsfw_score: float) -> None:
-        """标记为 rejected（NSFW 或质量不达标）"""
+        """标记为 rejected（NSFW 或质量不达标）
+
+        Args:
+            meme_id: 表情包 ID
+            nsfw_score: NSFW 分数
+        """
         # 移动文件到 rejected 文件夹
         await MemeLibrary.move_file(meme_id, "rejected")
         await AiMemeRecord.update_record(
