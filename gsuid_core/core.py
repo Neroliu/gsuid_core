@@ -210,7 +210,14 @@ async def main():
     end_time = time.time()
     logger.success(ASCII_FONT)
     duration = round(end_time - start_time, 2)
+
+    from gsuid_core.sv import SL
+
+    trigger_count = sum(len(sv.TL) for sv in SL.lst.values())
+    plugin_count = len(SL.plugins)
+    sv_count = len(SL.lst)
     logger.success(f"🚀 [GsCore] 启动完成, 耗时: {duration:.2f}s, 版本: {__version__}")
+    logger.success(f"📦 插件: {plugin_count} | 🛠️ 服务: {sv_count} | ⚡ 触发器: {trigger_count}")
 
     await server.serve()
 

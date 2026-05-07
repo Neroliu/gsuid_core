@@ -94,6 +94,29 @@ AI_CONFIG: Dict[str, GSC] = {
         12,
         options=[9, 12, 20, 30],
     ),
+    "enable_mcp_server": GsBoolConfig(
+        "是否启用MCP Server",
+        "是否将框架的to_ai触发器对外暴露为MCP Server, 启用后外部MCP客户端可通过SSE/stdio协议连接并调用所有触发器工具",
+        False,
+    ),
+    "mcp_server_transport": GsStrConfig(
+        "MCP Server传输协议",
+        "指定MCP Server使用的传输协议, sse为HTTP SSE模式(适合远程访问), stdio为标准输入输出模式(适合本地进程间通信)",
+        "sse",
+        options=["sse", "stdio"],
+    ),
+    "mcp_server_port": GsIntConfig(
+        "MCP Server监听端口",
+        "指定MCP Server SSE模式下的监听端口（监听地址复用框架HOST配置）",
+        8766,
+        options=[8766, 8767, 8768, 9000],
+    ),
+    "mcp_server_api_key": GsStrConfig(
+        "MCP Server API密钥",
+        "指定Bearer Token认证密钥, 留空则不启用认证。外部客户端连接时需在请求头中携带 Authorization: Bearer <api_key>",
+        "",
+        options=[],
+    ),
     "white_list": GsListStrConfig(
         "白名单",
         "指定白名单, 只有白名单中的用户才能使用AI服务",

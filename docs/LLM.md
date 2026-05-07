@@ -378,7 +378,72 @@ logger.error("错误信息", exc_info=True)
 
 ---
 
-## 八、总结
+## 八、Bot 与 _Bot 类区分（关键知识）
+
+> **⚠️ 这是高频混淆点**：`_Bot` 和 `Bot` 是两个完全不同的类，混用会导致运行时错误。
+
+### 8.1 `_Bot` — 底层 Bot 实现
+
+**文件**: `gsuid_core/bot.py`，**构造函数**: `_Bot(_id: str, ws: Optional[WebSocket] = None)`
+
+底层实现，负责 WebSocket 连接管理、消息队列、发送调度。**不依赖 Event**。
+
+```python
+class _Bot:
+    def __init__(self, _id: str, ws: Optional[WebSocket] = None):
+        self.bot_id = _id
+        self.bot = ws              # WebSocket 连接（可为 None）
+        self.queue = asyncio.queues.PriorityQueue()
+        self.sem = asyncio.Semaphore(10)
+        self._send_queue = asyncio.queues.Queue()
+```
+
+**使用场景**: 框架内部连接管理、HTTP API 模式（`_Bot("HTTP")`）。
+
+### 8.2 `Bot` — 高层包装器
+
+**文件**: `gsuid_core/bot.py`，**构造函数**: `Bot(bot: _Bot, ev: Event)`
+
+高层包装器，封装 `_Bot` + `Event`，供插件和触发器使用。提供 `send()`、`receive_resp()` 等业务 API。
+
+```python
+class Bot:
+    def __init__(self, bot: _Bot, ev: Event):
+        self.bot = bot              # 底层 _Bot 实例
+        self.ev = ev                # 当前事件
+        self.bot_id = ev.bot_id
+        self.bot_self_id = ev.bot_self_id
+```
+
+**使用场景**: 插件触发器函数参数 `bot: Bot`、AI Agent 调用、MockBot 包装。
+
+### 8.3 关键区别
+
+| 特性 | `_Bot` | `Bot` |
+|------|--------|-------|
+| 构造参数 | `_id: str, ws: Optional[WebSocket]` | `bot: _Bot, ev: Event` |
+| 依赖 Event | ❌ | ✅ 强依赖 |
+| send 方法 | `target_send()` 需完整参数 | `send()` 自动从 ev 提取 |
+| 交互式等待 | ❌ | ✅ `receive_resp()` |
+| 适用场景 | 框架内部、连接管理 | 插件开发、触发器函数 |
+
+### 8.4 禁止混用
+
+```python
+# ❌ 错误：在需要 Bot 的地方传入 _Bot
+from gsuid_core.bot import _Bot
+mock_bot = _Bot("MCP_Server")  # 缺少 Event，send() 会崩溃
+
+# ✅ 正确：创建完整的 Bot 实例
+from gsuid_core.bot import _Bot, Bot
+_bot = _Bot("MCP_Server")
+mock_ev = Event()
+bot = Bot(_bot, mock_ev)  # 包含 _Bot + Event
+```
+
+---
+
+## 九、总结
 
 编辑本项目代码时，记住以下优先级：
 
@@ -386,5 +451,6 @@ logger.error("错误信息", exc_info=True)
 2. **数据库操作 → 继承基类 + @with_session 装饰器**
 3. **异步要求 → 所有可能阻塞的方法都用 async def**
 4. **代码组织 → 相关方法封装在类中，使用 dataclass/TypedDict 定义数据结构**
+5. **Bot 类型 → 插件/触发器用 `Bot`（高层），框架内部用 `_Bot`（底层），禁止混用**
 
 如遇到无法解决的多类型冲突，且运行时类型确定可以使用 assert 守卫，必要时可用 Union 标注后配合 isinstance 处理。

@@ -364,7 +364,7 @@ def setup_logging():
         structlog.stdlib.add_log_level,
         structlog.processors.StackInfoRenderer(),
         # structlog.processors.format_exc_info,
-        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
+        structlog.processors.TimeStamper(fmt="%m-%d %H:%M:%S", utc=False),
     ]
 
     if IS_DEBUG_LOG:

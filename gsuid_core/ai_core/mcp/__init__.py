@@ -20,6 +20,10 @@ Example:
 """
 
 from gsuid_core.ai_core.mcp.client import MCPClient, MCPToolInfo, MCPToolResult
+from gsuid_core.ai_core.mcp.server import (
+    get_mcp_server,
+    get_mcp_trigger_count,
+)
 from gsuid_core.ai_core.mcp.startup import (
     unregister_mcp_server,
     register_all_mcp_tools,
@@ -49,4 +53,6 @@ __all__ = [
     "register_all_mcp_tools",
     "register_single_mcp_server",
     "unregister_mcp_server",
+    "get_mcp_server",
+    "get_mcp_trigger_count",
 ]

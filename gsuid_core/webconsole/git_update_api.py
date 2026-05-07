@@ -1,9 +1,9 @@
 """
 Git Update API
-提供 Git 版本管理的 RESTful API，支持查看 commit 历史、回退版本、强制更新。
+提供 Git 版本管理的 RESTful API，支持查看 commit 历史、回退版本、强制更新、批量更新。
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import Body, Depends, Request
 
@@ -319,5 +319,102 @@ async def force_update_plugin(
             "success": success,
             "message": message,
             "current_commit": current_commit,
+        },
+    }
+
+
+@app.post("/api/git-update/update-all")
+async def update_all_plugins(
+    request: Request,
+    _user: Dict = Depends(require_auth),
+):
+    """
+    一次性更新全部插件到最新
+
+    遍历所有插件（含 core 本体），对每个插件执行强制更新（git reset --hard origin/{branch} + git pull）。
+    返回每个插件的更新结果，包括成功/失败状态和更新后的 commit 信息。
+
+    Args:
+        request: FastAPI 请求对象
+        _user: 认证用户信息
+
+    Returns:
+        status: 0全部成功，1存在失败，2无插件可更新
+        data: {
+            total: 总插件数,
+            success_count: 成功数量,
+            fail_count: 失败数量,
+            results: 每个插件的更新结果列表
+        }
+    """
+    all_status = await get_all_plugins_status()
+
+    if not all_status:
+        return {
+            "status": 2,
+            "msg": "没有可更新的插件",
+            "data": {
+                "total": 0,
+                "success_count": 0,
+                "fail_count": 0,
+                "results": [],
+            },
+        }
+
+    results: List[Dict[str, Any]] = []
+    success_count = 0
+    fail_count = 0
+
+    for status in all_status:
+        plugin_name = status["name"]
+        plugin_path = _resolve_plugin_path(plugin_name)
+
+        if not plugin_path:
+            results.append(
+                {
+                    "name": plugin_name,
+                    "success": False,
+                    "message": f"插件 {plugin_name} 路径解析失败",
+                    "current_commit": None,
+                }
+            )
+            fail_count += 1
+            continue
+
+        success, message = await force_update(plugin_path)
+
+        current_commit = None
+        if success:
+            commit_info = await get_current_commit(plugin_path)
+            if commit_info:
+                current_commit = _format_commit(commit_info)
+            success_count += 1
+        else:
+            fail_count += 1
+
+        results.append(
+            {
+                "name": plugin_name,
+                "success": success,
+                "message": message,
+                "current_commit": current_commit,
+            }
+        )
+
+    overall_status = 0 if fail_count == 0 else 1
+    overall_msg = (
+        f"全部更新完成，共 {success_count} 个成功"
+        if fail_count == 0
+        else f"更新完成，{success_count} 个成功，{fail_count} 个失败"
+    )
+
+    return {
+        "status": overall_status,
+        "msg": overall_msg,
+        "data": {
+            "total": len(all_status),
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "results": results,
         },
     }

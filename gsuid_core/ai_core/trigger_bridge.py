@@ -29,6 +29,11 @@ _AI_CALL_CONTEXT: contextvars.ContextVar[Optional[Dict[str, list]]] = contextvar
     "_AI_CALL_CONTEXT", default=None
 )
 
+# ─── MCP Trigger Registry ────────────────────────────────────────────────────
+# 存储所有带 to_ai 的触发器的原始信息，供 MCP Server 模块使用
+# 格式: {tool_name: {func, keyword, to_ai_doc, sv, trigger_type}}
+_MCP_TRIGGER_REGISTRY: Dict[str, Dict[str, Any]] = {}
+
 
 # ─── ai_return ────────────────────────────────────────────────────────────────
 
@@ -358,6 +363,17 @@ def _register_trigger_as_ai_tool(
         f"🧠 [Trigger→AI] 触发器 [{primary_keyword}] 的函数 [{tool_func_name}] "
         f"已注册为 AI 工具 (分类: by_trigger, 插件: {plugin_name})"
     )
+
+    # 同时注册到 MCP 触发器注册表，供 MCP Server 模块使用
+    _MCP_TRIGGER_REGISTRY[tool_func_name] = {
+        "func": func,
+        "keyword": keyword,
+        "to_ai_doc": to_ai_doc,
+        "sv": sv,
+        "trigger_type": trigger_type,
+        "plugin_name": plugin_name,
+        "primary_keyword": primary_keyword,
+    }
 
 
 # ─── send_trigger_images 工具 ─────────────────────────────────────────────────

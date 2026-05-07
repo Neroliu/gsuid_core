@@ -862,3 +862,134 @@ curl http://localhost:8765/api/system/info
 # 检查WebSocket连接
 ws://localhost:8765/ws/test_bot?token=<WS_TOKEN>
 ```
+
+---
+
+## 十二、Bot 与 _Bot 类详解
+
+### 12.1 类层次结构
+
+```
+_Bot (底层实现)
+  │
+  │  包装
+  ▼
+Bot (高层包装器)
+  │
+  │  代理
+  ▼
+MockBot (AI 调用时的代理)
+```
+
+### 12.2 `_Bot` 类 — 底层 Bot 实现
+
+**文件**: `gsuid_core/bot.py`
+
+`_Bot` 是底层的 Bot 实现，负责管理 WebSocket 连接、消息队列和发送调度。
+
+```python
+class _Bot:
+    def __init__(self, _id: str, ws: Optional[WebSocket] = None):
+        self.bot_id = _id          # Bot 标识符
+        self.bot = ws              # WebSocket 连接（可为 None，如 HTTP 模式）
+        self.logger = GsLogger(self.bot_id, ws)
+        self.queue = asyncio.queues.PriorityQueue()  # 任务队列
+        self.send_dict = {}        # HTTP 模式下的发送字典
+        self.bg_tasks = set()      # 后台任务集合
+        self.sem = asyncio.Semaphore(10)  # 并发控制
+        self._send_queue = asyncio.queues.Queue()  # 独立发送队列
+        self._send_task = None     # 发送 worker 任务
+```
+
+**核心职责**:
+- 管理 WebSocket 连接的生命周期
+- 通过 `_send_queue` 串行化 WebSocket 发送，避免并发写入
+- 通过 `queue` + `sem` 管理任务执行的并发度
+- 提供 `target_send()` 方法处理消息格式转换、历史记录、记忆系统集成
+- 提供 `_process()` 方法作为任务消费循环
+
+**关键方法**:
+| 方法 | 说明 |
+|------|------|
+| `target_send()` | 底层发送方法，处理消息转换、Markdown、按钮、历史记录 |
+| `_send_worker()` | 独立发送 worker，从发送队列串行执行 |
+| `_process()` | 任务消费循环，支持 shutdown_event 优雅关闭 |
+| `wait_task()` | HTTP 模式下等待任务完成并返回结果 |
+
+### 12.3 `Bot` 类 — 高层包装器
+
+**文件**: `gsuid_core/bot.py`
+
+`Bot` 是供插件和触发器使用的高层包装器，包装 `_Bot` + `Event`，提供面向业务的 API。
+
+```python
+class Bot:
+    instances: Dict[str, "Bot"] = {}           # 单轮交互实例
+    mutiply_instances: Dict[str, "Bot"] = {}   # 多轮交互实例
+    mutiply_map: Dict[str, str] = {}           # 多轮交互映射
+
+    def __init__(self, bot: _Bot, ev: Event):
+        self.bot = bot              # 底层 _Bot 实例
+        self.ev = ev                # 当前事件
+        self.bot_id = ev.bot_id
+        self.bot_self_id = ev.bot_self_id
+        self.session_id = f"{self.bid}%%%{self.temp_gid}%%%{self.uid}"
+```
+
+**核心职责**:
+- 封装 `_Bot` + `Event` 的组合，提供简洁的 `send()` API
+- 管理交互式会话（单轮/多轮等待用户回复）
+- 处理按钮、Markdown 模板等平台适配逻辑
+
+**关键方法**:
+| 方法 | 说明 |
+|------|------|
+| `send()` | 发送消息，自动从 `ev` 提取目标信息 |
+| `receive_resp()` | 发送消息并等待用户回复（交互式） |
+| `send_option()` | 发送带选项按钮的消息 |
+| `wait_for_key()` | 等待用户回复 |
+| `target_send()` | 指定目标发送消息 |
+
+### 12.4 `MockBot` 类 — AI 调用代理
+
+**文件**: `gsuid_core/ai_core/trigger_bridge.py`
+
+`MockBot` 是 AI 调用触发器时使用的代理 Bot，拦截 `send()` 将内容收集而非真正发送。
+
+```python
+class MockBot:
+    def __init__(self, real_bot: Bot, ctx: Dict[str, Any]):
+        self._real_bot = real_bot   # 真实 Bot 实例
+        self._ctx = ctx             # 收集上下文
+
+    async def send(self, message, at_sender=False):
+        # 文本 → 存入 ctx["bot_messages"]
+        # 图片 → RM.register() → 存入 ctx["image_ids"]
+
+    def __getattr__(self, name):
+        # 其他属性代理到 real_bot
+```
+
+### 12.5 使用场景对照
+
+| 场景 | 使用的类 | 说明 |
+|------|----------|------|
+| 框架启动、WebSocket 连接 | `_Bot` | 底层连接管理 |
+| 插件触发器函数参数 `bot: Bot` | `Bot` | 高层 API，插件直接使用 |
+| AI Agent 调用触发器 | `MockBot` 包装 `Bot` | 拦截发送，收集返回值 |
+| MCP Server 调用触发器 | `MockBot` 包装 `Bot` | 同 AI Agent，但无 AI 上下文 |
+| HTTP API 模式 | `_Bot("HTTP")` | 无 WebSocket，通过 send_dict 返回 |
+
+### 12.6 关键区别总结
+
+| 特性 | `_Bot` | `Bot` |
+|------|--------|-------|
+| 构造参数 | `_id: str, ws: Optional[WebSocket]` | `bot: _Bot, ev: Event` |
+| 依赖 Event | ❌ 不依赖 | ✅ 强依赖 |
+| send 方法 | `target_send()` 需要完整参数 | `send()` 自动从 ev 提取 |
+| 交互式等待 | ❌ 不支持 | ✅ `receive_resp()` |
+| 按钮/模板 | ❌ 不处理 | ✅ 平台适配 |
+| 实例管理 | 无 | `instances` / `mutiply_instances` |
+| 适用场景 | 框架内部、连接管理 | 插件开发、触发器函数 |
+
+> **⚠️ 重要**: 在需要 `Bot` 类型的场景中（如 `MockBot.__init__`、触发器函数参数），**必须**传入 `Bot` 实例而非 `_Bot` 实例。`Bot` 包装了 `_Bot` + `Event`，缺少任何一个都会导致运行时错误。
