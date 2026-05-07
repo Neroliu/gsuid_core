@@ -35,7 +35,11 @@ async def create_subagent(
     logger.info(f"🧠 [Subagent] 启动通用规划执行Agent，任务: {task[:50]}...")
 
     # 搜索工具
-    tools = await search_tools(query=task, limit=8, non_category="self")
+    tools = await search_tools(
+        query=task,
+        limit=8,
+        non_category="self",
+    )
     logger.debug(f"🧠 [Subagent] 工具列表: {[tool.name for tool in tools]}")
 
     # ✨ 核心：内置一个极其强大的 Plan-and-Solve System Prompt

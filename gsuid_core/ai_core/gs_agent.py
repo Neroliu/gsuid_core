@@ -358,7 +358,7 @@ class GsCoreAIAgent:
                     tools += await search_tools(
                         query=qy,
                         limit=6,
-                        non_category=["self", "buildin", "default"],
+                        non_category=["self", "buildin"],
                     )
                 logger.debug(f"🧠 [GsCoreAIAgent] 主Agent工具数量: {len(tools)}")
             else:

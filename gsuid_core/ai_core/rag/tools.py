@@ -166,35 +166,36 @@ async def get_main_agent_tools(query: str = "") -> ToolList:
     from gsuid_core.ai_core.rag.base import client, embedding_model
 
     all_tools_cag = get_registered_tools()
-    all_tools = {}
+    result_tools = []
 
-    # self 分类始终加载
+    # self 分类始终加载（ToolBase 包装对象，需要取 .tool）
     if "self" in all_tools_cag:
-        all_tools.update(all_tools_cag["self"])
+        for tool_base in all_tools_cag["self"].values():
+            result_tools.append(tool_base.tool)
         logger.debug(f"🧠 [Tools] self 分类加载 {len(all_tools_cag['self'])} 个工具")
 
-    # buildin 分类按阈值加载
+    # buildin 分类按阈值加载（search_tools 返回的已经是 Tool 对象）
     if "buildin" in all_tools_cag:
         if client is not None and embedding_model is not None:
             # 使用用户查询加载高相似度的 buildin 工具，如果 query 为空则使用通用查询
             search_query = query if query else "buildin tool utility common function"
             buildin_tools_search = await search_tools(
                 query=search_query,
-                limit=6,
+                limit=3,
                 category="buildin",
-                threshold=0.45,
+                threshold=0.3,
             )
             logger.debug(
                 f"🧠 [Tools] buildin 分类通过阈值筛选加载 {len(buildin_tools_search)} 个工具 (query: {search_query})"
             )
-            for tool in buildin_tools_search:
-                all_tools[tool.name] = tool
+            result_tools.extend(buildin_tools_search)
         else:
-            # AI功能未启用时，加载所有 buildin 工具
-            all_tools.update(all_tools_cag["buildin"])
+            # AI功能未启用时，加载所有 buildin 工具（ToolBase 包装对象，需要取 .tool）
+            for tool_base in all_tools_cag["buildin"].values():
+                result_tools.append(tool_base.tool)
             logger.debug(f"🧠 [Tools] buildin 分类加载 {len(all_tools_cag['buildin'])} 个工具（AI未启用）")
 
-    return [all_tools[tool].tool for tool in all_tools]
+    return result_tools
 
 
 async def search_tools(
@@ -202,7 +203,8 @@ async def search_tools(
     limit: int = 10,
     category: Union[str, list[str]] = "all",
     non_category: Union[str, list[str]] = "",
-    threshold: float = 0.65,
+    threshold: float = 0.5,
+    debug: bool = False,
 ) -> ToolList:
     """根据自然语言意图检索关联工具
 
@@ -213,7 +215,8 @@ async def search_tools(
         limit: 返回结果数量限制，默认为10
         category: 工具分类名称，可选值："buildin"、"default"、"common"、"all"，默认为"all", 也可传入列表
         non_category: 将不会在这个分类中找工具, 优先级比category高，可选值："self"、"buildin"、"common"，默认为空
-        threshold: 相似度分数阈值，只有分数高于该值的工具才会被返回，默认为0.0
+        threshold: 相似度分数阈值，只有分数高于该值的工具才会被返回，默认为0.65
+        debug: 是否启用调试模式，启用后会记录所有返回工具的分数（无论是否超过阈值），默认为False
 
     Returns:
         匹配的工具列表
@@ -226,49 +229,79 @@ async def search_tools(
     if client is None or embedding_model is None:
         raise RuntimeError("AI功能未启用，无法搜索工具")
 
-    logger.info(f"🧠 [Tools] 正在查询: {query}, threshold={threshold}, limit={limit}")
+    logger.info(f"🧠 [Tools] 正在查询: {query}, threshold={threshold}, limit={limit}, debug={debug}")
     query_vec = list(embedding_model.embed([query]))[0]
-    response = await client.query_points(
-        collection_name=TOOLS_COLLECTION_NAME,
-        query=list(query_vec),
-        limit=limit,
-        score_threshold=threshold if threshold > 0 else None,
-    )
+
+    # 如果启用 debug，使用大 limit 获取所有工具以便查看分数
+    if debug:
+        response = await client.query_points(
+            collection_name=TOOLS_COLLECTION_NAME,
+            query=list(query_vec),
+            limit=1000,  # debug 模式下用大 limit 获取所有工具
+        )
+    else:
+        response = await client.query_points(
+            collection_name=TOOLS_COLLECTION_NAME,
+            query=list(query_vec),
+            limit=limit,
+            score_threshold=threshold if threshold > 0 else None,
+        )
+
     tool_names: List[str] = []
-    score_info = []
+    score_map: Dict[str, float] = {}
+    all_scores_info = []
+
     for point in response.points:
         if point.payload and point.payload.get("name"):
             name = point.payload.get("name")
             score = point.score
             if name:
+                # 如果启用了 debug 且工具分数低于阈值，则不加入结果
+                if debug and threshold > 0 and score < threshold:
+                    all_scores_info.append(f"{name}={score:.4f}(未达阈值)")
+                    continue
                 tool_names.append(name)
-                score_info.append(f"{name}({score:.4f})")
+                score_map[name] = score
+                all_scores_info.append(f"{name}={score:.4f}")
 
-    if score_info:
-        logger.info(f"🧠 [Tools] 查询结果: {', '.join(score_info)}")
+    if debug:
+        logger.debug(f"🧠 [Tools] 向量搜索所有工具分数(debug): {', '.join(all_scores_info)}")
 
+    # 根据 category/non_category 过滤工具
     if category == "all":
-        all_tools = get_all_tools()
-        tools = [all_tools[tool].tool for tool in all_tools if all_tools[tool].name in tool_names]
+        all_tools_dict = get_all_tools()
     else:
         all_tools_cag = get_registered_tools()
         if isinstance(category, str):
             category = [category]
 
-        all_tools = {}
+        all_tools_dict = {}
         if non_category:
             if isinstance(non_category, str):
                 non_category = [non_category]
             for cat in all_tools_cag:
                 if cat in non_category:
                     continue
-                all_tools.update(all_tools_cag[cat])
+                all_tools_dict.update(all_tools_cag[cat])
         else:
             for cat in category:
                 if cat not in all_tools_cag:
                     continue
-                all_tools.update(all_tools_cag[cat])
+                all_tools_dict.update(all_tools_cag[cat])
 
-    tools = [all_tools[tool].tool for tool in all_tools if all_tools[tool].name in tool_names]
+    # 从 all_tools_dict 中筛选出 tool_names 中的工具
+    # all_tools_dict 的 value 是 ToolBase 对象（有 .tool 属性），也可能是 Tool 对象
+    tools = []
+    filtered_info = []
+    for tool_name in tool_names:
+        if tool_name in all_tools_dict:
+            tool_obj = all_tools_dict[tool_name]
+            if hasattr(tool_obj, "tool"):
+                tools.append(tool_obj.tool)
+            else:
+                tools.append(tool_obj)
+            filtered_info.append(f"{tool_name}({score_map[tool_name]:.4f})")
+
+    logger.info(f"🧠 [Tools] 查询结果(category={category}): {', '.join(filtered_info)}")
 
     return tools

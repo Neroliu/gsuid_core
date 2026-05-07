@@ -186,6 +186,7 @@ async def add_interval_task(
     ctx: RunContext[ToolContext],
     interval_value: int,
     task_prompt: str,
+    start_time: str,
     interval_type: str = "minutes",
     max_executions: int = 10,
 ) -> str:
@@ -193,7 +194,7 @@ async def add_interval_task(
     添加循环任务
 
     按固定间隔重复执行任务。当用户需要定期执行某个任务时调用此工具，
-    例如"每半小时查一下股价"、"每天早上发天气预报"。
+    例如"每半小时查一下股价"、"每天早上发天气预报"、"每天下午3点30分查xxx"。
 
     循环任务会按照设定的时间间隔重复执行，达到最大执行次数后自动结束。
     系统安全限制：最大执行10次，最小间隔5分钟。
@@ -204,6 +205,8 @@ async def add_interval_task(
         task_prompt: 任务描述，应该清晰说明需要做什么
         interval_type: 间隔类型，"minutes"(分钟)/"hours"(小时)/"days"(天)，默认 "minutes"
         max_executions: 最大执行次数，默认 10 次（安全限制，不可超过）
+        start_time: 首次执行的时间，格式 "YYYY-MM-DD HH:MM:SS"
+                    例如用户说"每天下午3点30分"，则 start_time="2024-05-15 15:30:00"
 
     Returns:
         操作结果信息，包含任务ID供后续查询/暂停/取消使用
@@ -222,9 +225,20 @@ async def add_interval_task(
         >>> await add_interval_task(
         ...     ctx,
         ...     interval_value=1,
-        ...     interval_type="days",
         ...     task_prompt="查询今天的天气预报，以简洁友好的语气回复，格式如'今天天气XX度，XX天气，记得带伞哦~'",
+        ...     interval_type="days",
         ...     max_executions=10,
+        ...     start_time="2024-05-15 08:00:00",
+        ... )
+
+        # 用户说"每天下午3点30分查xxx"
+        >>> await add_interval_task(
+        ...     ctx,
+        ...     interval_value=1,
+        ...     task_prompt="查询xxx的最新信息",
+        ...     interval_type="days",
+        ...     max_executions=10,
+        ...     start_time="2024-05-15 15:30:00",
         ... )
 
         # 用户说"每2小时提醒我站起来活动一下"
@@ -250,6 +264,16 @@ async def add_interval_task(
 
     if interval_value <= 0:
         return "⚠️ 间隔值必须大于 0"
+
+    # 解析 start_time (YYYY-MM-DD HH:MM:SS 格式)
+    start_datetime_value: Optional[datetime] = None
+
+    if start_time:
+        try:
+            start_datetime_value = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+            start_datetime_value = TZ_SHANGHAI.localize(start_datetime_value)
+        except ValueError:
+            return "⚠️ start_time 格式错误，请使用 'YYYY-MM-DD HH:MM:SS' 格式"
 
     # 转换为秒
     if interval_type == "minutes":
@@ -280,8 +304,24 @@ async def add_interval_task(
     task_id = f"scheduled_task_{uuid.uuid4().hex[:12]}"
 
     try:
-        start_time = datetime.now(TZ_SHANGHAI)
-        next_run_time = start_time + timedelta(seconds=interval_seconds)
+        now_shanghai = datetime.now(TZ_SHANGHAI)
+
+        # 计算下次执行时间
+        if start_datetime_value is not None:
+            # 用户指定了开始时间 (YYYY-MM-DD HH:MM:SS 格式)
+            # 从指定时间开始按间隔执行
+            if start_datetime_value <= now_shanghai:
+                return f"⚠️ 开始时间必须在未来，当前时间: {now_shanghai.strftime('%Y-%m-%d %H:%M:%S')}"
+            next_run = start_datetime_value
+            trigger = None
+            start_date_for_interval = start_datetime_value
+            start_time_display = f"从 {start_datetime_value.strftime('%Y-%m-%d %H:%M')} 开始"
+        else:
+            # 使用 interval trigger，从当前时间开始
+            next_run = now_shanghai + timedelta(seconds=interval_seconds)
+            trigger = None
+            start_date_for_interval = now_shanghai
+            start_time_display = None
 
         await AIScheduledTask.full_insert_data(
             task_id=task_id,
@@ -299,28 +339,49 @@ async def add_interval_task(
             interval_seconds=interval_seconds,
             max_executions=max_executions,
             current_executions=0,
-            start_time=start_time,
-            next_run_time=next_run_time,
+            start_time=now_shanghai,
+            next_run_time=next_run,
         )
 
-        scheduler.add_job(
-            func=execute_scheduled_task,
-            trigger="interval",
-            seconds=interval_seconds,
-            start_date=start_time,
-            args=[task_id],
-            id=task_id,
-            replace_existing=True,
-        )
+        # 添加调度任务
+        if trigger:
+            # 使用 cron trigger（每天固定时间执行）
+            scheduler.add_job(
+                func=execute_scheduled_task,
+                trigger=trigger,
+                args=[task_id],
+                id=task_id,
+                replace_existing=True,
+            )
+        else:
+            # 使用 interval trigger（固定间隔执行）
+            scheduler.add_job(
+                func=execute_scheduled_task,
+                trigger="interval",
+                seconds=interval_seconds,
+                start_date=start_date_for_interval,
+                args=[task_id],
+                id=task_id,
+                replace_existing=True,
+            )
 
-        interval_unit = {"minutes": "分钟", "hours": "小时", "days": "天"}.get(interval_type, interval_type)
-        return (
-            f"✅ 循环任务添加成功！\n"
-            f"📋 任务ID：{task_id}\n"
-            f"⏰ 执行间隔：每 {interval_value} {interval_unit}\n"
-            f"🔒 最大执行次数：{max_executions}\n"
-            f"📝 任务内容：{task_prompt}"
-        )
+        if start_time_display:
+            return (
+                f"✅ 循环任务添加成功！\n"
+                f"📋 任务ID：{task_id}\n"
+                f"⏰ 执行时间：{start_time_display}\n"
+                f"🔒 最大执行次数：{max_executions}\n"
+                f"📝 任务内容：{task_prompt}"
+            )
+        else:
+            interval_unit = {"minutes": "分钟", "hours": "小时", "days": "天"}.get(interval_type, interval_type)
+            return (
+                f"✅ 循环任务添加成功！\n"
+                f"📋 任务ID：{task_id}\n"
+                f"⏰ 执行间隔：每 {interval_value} {interval_unit}\n"
+                f"🔒 最大执行次数：{max_executions}\n"
+                f"📝 任务内容：{task_prompt}"
+            )
 
     except Exception as e:
         logger.error(f"❌ [ScheduledTask] 添加任务失败: {e}")

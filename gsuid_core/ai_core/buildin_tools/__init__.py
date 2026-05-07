@@ -10,17 +10,6 @@ Buildin Tools 模块
 - update_user_favorability: 更新用户好感度（增量）
 - create_subagent: 创建子Agent完成特定任务
 - send_message_by_ai: 发送消息给用户
-
-### 默认内置工具, 主Agent调用时也会加载 (category="buildin")
-直接调用，不需要特别理由不会拒绝。
-- search_knowledge: 检索知识库内容
-- web_search: Web搜索工具
-- web_fetch: 网页抓取工具（将网页转换为Markdown）
-- query_user_memory: 查询用户记忆
-
-### 通常工具 (category="common")
-有选择地调用，当用户明确需要相关功能时使用。
-- get_self_persona_info: 获取自身Persona信息
 - add_once_task: 添加一次性定时任务
 - add_interval_task: 添加循环任务
 - list_scheduled_tasks: 列出所有定时任务
@@ -29,6 +18,26 @@ Buildin Tools 模块
 - cancel_scheduled_task: 取消任务
 - pause_scheduled_task: 暂停任务
 - resume_scheduled_task: 恢复任务
+
+### 默认内置工具, 主Agent调用时也会加载 (category="buildin")
+直接调用，不需要特别理由不会拒绝。
+- search_knowledge: 检索知识库内容
+- search_image: 检索图片资源
+- web_search_tool: Web搜索工具
+- web_fetch_tool: 网页抓取工具（将网页转换为Markdown）
+- query_user_memory: 查询用户记忆
+- get_self_persona_info: 获取自身Persona信息
+- set_user_favorability: 设置用户好感度（绝对值）
+
+### 通常工具 (category="common")
+有选择地调用，当用户明确需要相关功能时使用。
+- send_meme: 发送表情包
+- collect_meme: 收藏表情包
+- search_meme: 搜索表情包
+- create_persistent_agent_tool: 创建持久化子Agent
+- send_agent_task_tool: 向持久化Agent发送任务
+- list_agents_tool: 列出所有活跃的持久化Agent
+- stop_agent_tool: 停止指定的持久化Agent
 
 ### 子Agent工具 (category="default")
 通过 create_subagent 调用，用于文件操作、代码执行等。
@@ -73,11 +82,21 @@ from gsuid_core.ai_core.buildin_tools.self_info import get_self_persona_info
 # 网页抓取工具 - 抓取网页内容并转换为Markdown
 from gsuid_core.ai_core.buildin_tools.web_fetch import web_fetch_tool
 
+# 表情包工具 - 发送/收藏/搜索表情包
+from gsuid_core.ai_core.buildin_tools.meme_tools import (
+    send_meme,
+    search_meme,
+    collect_meme,
+)
+
 # RAG检索工具 - 知识库查询，支持类别/插件筛选
-from gsuid_core.ai_core.buildin_tools.rag_search import search_knowledge
+from gsuid_core.ai_core.buildin_tools.rag_search import (
+    search_image,
+    search_knowledge,
+)
 
 # Web搜索工具 - 基于Tavily的web搜索
-from gsuid_core.ai_core.buildin_tools.web_search import web_search
+from gsuid_core.ai_core.buildin_tools.web_search import web_search_tool
 
 # 文件管理工具 - 读写执行文件和diff对比
 from gsuid_core.ai_core.buildin_tools.file_manager import (
@@ -112,6 +131,7 @@ from gsuid_core.ai_core.buildin_tools.command_executor import execute_shell_comm
 
 # 好感度管理工具 - 管理用户好感度
 from gsuid_core.ai_core.buildin_tools.favorability_manager import (
+    set_user_favorability,
     update_user_favorability,
 )
 
@@ -126,8 +146,9 @@ __all__ = [
     "ai_tools",
     # RAG检索工具
     "search_knowledge",
+    "search_image",
     # Web搜索工具
-    "web_search",
+    "web_search_tool",
     # 网页抓取工具
     "web_fetch_tool",
     # 消息发送工具
@@ -139,6 +160,11 @@ __all__ = [
     "query_user_memory",
     # 好感度管理工具
     "update_user_favorability",
+    "set_user_favorability",
+    # 表情包工具
+    "send_meme",
+    "collect_meme",
+    "search_meme",
     # AI日期工具
     "get_current_date",
     "_get_current_date",
