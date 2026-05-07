@@ -15,6 +15,11 @@ from gsuid_core.ai_core.meme.library import get_memes_base_path
 async def init_meme_module():
     """初始化表情包模块"""
     from gsuid_core.ai_core.meme.config import meme_config
+    from gsuid_core.ai_core.configs.ai_config import ai_config
+
+    enable_ai: bool = ai_config.get_config("enable").data
+    if not enable_ai:
+        return
 
     if not meme_config.get_config("meme_enable").data:
         logger.info("[Meme] 表情包模块未启用，跳过初始化")
