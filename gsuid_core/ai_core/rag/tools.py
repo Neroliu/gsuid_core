@@ -151,26 +151,58 @@ async def sync_tools(tools_map: Dict[str, ToolBase]) -> None:
     logger.info("🧠 [Tools] 工具同步完成")
 
 
-def get_main_agent_tools() -> ToolList:
-    """获取主Agent基础工具集（仅 self + buildin 分类，始终加载）
+async def get_main_agent_tools(query: str = "") -> ToolList:
+    """获取主Agent基础工具集
+
+    - self 分类：始终加载
+    - buildin 分类：按阈值 0.45 以上加载，最多 6 个（如果有 query 则按 query 筛选）
 
     by_trigger 分类的工具不再无条件加载，而是通过 search_tools() 向量检索按需加载，
     避免插件数量膨胀导致工具列表过大（100+ 工具）浪费 Token 并降低 LLM 选工具准确率。
+
+    Args:
+        query: 用户查询字符串，用于筛选 buildin 工具。如果为空则使用通用查询。
     """
+    from gsuid_core.ai_core.rag.base import client, embedding_model
+
     all_tools_cag = get_registered_tools()
     all_tools = {}
-    for cat in ["self", "buildin"]:
-        if cat in all_tools_cag:
-            all_tools.update(all_tools_cag[cat])
+
+    # self 分类始终加载
+    if "self" in all_tools_cag:
+        all_tools.update(all_tools_cag["self"])
+        logger.debug(f"🧠 [Tools] self 分类加载 {len(all_tools_cag['self'])} 个工具")
+
+    # buildin 分类按阈值加载
+    if "buildin" in all_tools_cag:
+        if client is not None and embedding_model is not None:
+            # 使用用户查询加载高相似度的 buildin 工具，如果 query 为空则使用通用查询
+            search_query = query if query else "buildin tool utility common function"
+            buildin_tools_search = await search_tools(
+                query=search_query,
+                limit=6,
+                category="buildin",
+                threshold=0.45,
+            )
+            logger.debug(
+                f"🧠 [Tools] buildin 分类通过阈值筛选加载 {len(buildin_tools_search)} 个工具 (query: {search_query})"
+            )
+            for tool in buildin_tools_search:
+                all_tools[tool.name] = tool
+        else:
+            # AI功能未启用时，加载所有 buildin 工具
+            all_tools.update(all_tools_cag["buildin"])
+            logger.debug(f"🧠 [Tools] buildin 分类加载 {len(all_tools_cag['buildin'])} 个工具（AI未启用）")
 
     return [all_tools[tool].tool for tool in all_tools]
 
 
 async def search_tools(
     query: str,
-    limit: int = 5,
+    limit: int = 10,
     category: Union[str, list[str]] = "all",
     non_category: Union[str, list[str]] = "",
+    threshold: float = 0.65,
 ) -> ToolList:
     """根据自然语言意图检索关联工具
 
@@ -178,9 +210,10 @@ async def search_tools(
 
     Args:
         query: 用户查询的自然语言描述
-        limit: 返回结果数量限制
+        limit: 返回结果数量限制，默认为10
         category: 工具分类名称，可选值："buildin"、"default"、"common"、"all"，默认为"all", 也可传入列表
         non_category: 将不会在这个分类中找工具, 优先级比category高，可选值："self"、"buildin"、"common"，默认为空
+        threshold: 相似度分数阈值，只有分数高于该值的工具才会被返回，默认为0.0
 
     Returns:
         匹配的工具列表
@@ -193,19 +226,26 @@ async def search_tools(
     if client is None or embedding_model is None:
         raise RuntimeError("AI功能未启用，无法搜索工具")
 
-    logger.info(f"🧠 [Tools] 正在查询: {query}")
+    logger.info(f"🧠 [Tools] 正在查询: {query}, threshold={threshold}, limit={limit}")
     query_vec = list(embedding_model.embed([query]))[0]
     response = await client.query_points(
         collection_name=TOOLS_COLLECTION_NAME,
         query=list(query_vec),
         limit=limit,
+        score_threshold=threshold if threshold > 0 else None,
     )
     tool_names: List[str] = []
+    score_info = []
     for point in response.points:
         if point.payload and point.payload.get("name"):
             name = point.payload.get("name")
+            score = point.score
             if name:
                 tool_names.append(name)
+                score_info.append(f"{name}({score:.4f})")
+
+    if score_info:
+        logger.info(f"🧠 [Tools] 查询结果: {', '.join(score_info)}")
 
     if category == "all":
         all_tools = get_all_tools()

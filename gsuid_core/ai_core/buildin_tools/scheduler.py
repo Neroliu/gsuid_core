@@ -68,7 +68,7 @@ def _get_execute_scheduled_task():
 # ============ 添加任务 ============
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def add_once_task(
     ctx: RunContext[ToolContext],
     run_time: str,
@@ -181,7 +181,7 @@ async def add_once_task(
         return f"⚠️ 添加任务失败: {str(e)}"
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def add_interval_task(
     ctx: RunContext[ToolContext],
     interval_value: int,
@@ -330,7 +330,7 @@ async def add_interval_task(
 # ============ 查询任务 ============
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def list_scheduled_tasks(
     ctx: RunContext[ToolContext],
 ) -> str:
@@ -411,7 +411,7 @@ async def list_scheduled_tasks(
         return f"⚠️ 查询任务列表失败: {str(e)}"
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def query_scheduled_task(
     ctx: RunContext[ToolContext],
     task_id: str,
@@ -502,7 +502,7 @@ async def query_scheduled_task(
 # ============ 修改任务 ============
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def modify_scheduled_task(
     ctx: RunContext[ToolContext],
     task_id: str,
@@ -589,7 +589,7 @@ async def modify_scheduled_task(
 # ============ 删除/取消任务 ============
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def cancel_scheduled_task(
     ctx: RunContext[ToolContext],
     task_id: str,
@@ -652,7 +652,7 @@ async def cancel_scheduled_task(
 # ============ 暂停/恢复任务 ============
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def pause_scheduled_task(
     ctx: RunContext[ToolContext],
     task_id: str,
@@ -716,7 +716,7 @@ async def pause_scheduled_task(
         return f"⚠️ 暂停任务失败: {str(e)}"
 
 
-@ai_tools(category="common")
+@ai_tools(category="self")
 async def resume_scheduled_task(
     ctx: RunContext[ToolContext],
     task_id: str,

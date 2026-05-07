@@ -18,7 +18,7 @@ from gsuid_core.ai_core.models import ToolContext
 from gsuid_core.ai_core.register import ai_tools
 
 
-@ai_tools(category="self")
+@ai_tools(category="common")
 async def create_persistent_agent_tool(
     ctx: RunContext[ToolContext],
     name: str,
@@ -69,7 +69,7 @@ async def create_persistent_agent_tool(
     )
 
 
-@ai_tools(category="self")
+@ai_tools(category="common")
 async def send_agent_task_tool(
     ctx: RunContext[ToolContext],
     agent_id: str,
@@ -109,7 +109,7 @@ async def send_agent_task_tool(
     return f"【Agent '{agent.name}' 执行结果】\n{result}"
 
 
-@ai_tools(category="buildin")
+@ai_tools(category="common")
 async def list_agents_tool(
     ctx: RunContext[ToolContext],
 ) -> str:
@@ -144,7 +144,7 @@ async def list_agents_tool(
     return "\n".join(lines)
 
 
-@ai_tools(category="self")
+@ai_tools(category="common")
 async def stop_agent_tool(
     ctx: RunContext[ToolContext],
     agent_id: str,

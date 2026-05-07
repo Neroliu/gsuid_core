@@ -345,18 +345,19 @@ class GsCoreAIAgent:
 
         if self.create_by in ["SubAgent", "Chat", "Agent", "AutoPlanner"]:
             if not tools:
-                tools = get_main_agent_tools()
                 qy = ""
                 if isinstance(user_message, str):
                     qy = user_message
                 elif ev is not None:
                     qy = ev.raw_text
 
+                tools = await get_main_agent_tools(query=qy)
+
                 if qy:
                     logger.debug(f"🧠 [GsCoreAIAgent] 尝试搜索工具: {qy}")
                     tools += await search_tools(
                         query=qy,
-                        limit=5,
+                        limit=6,
                         non_category=["self", "buildin", "default"],
                     )
                 logger.debug(f"🧠 [GsCoreAIAgent] 主Agent工具数量: {len(tools)}")
