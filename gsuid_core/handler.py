@@ -67,12 +67,13 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
     # ====== Meme Observer Hook ======
     from gsuid_core.ai_core.meme.observer import observe_message_for_memes
 
-    asyncio.create_task(
-        observe_message_for_memes(
-            event,
-            "",
-        ),
-    )
+    if enable_ai:
+        asyncio.create_task(
+            observe_message_for_memes(
+                event,
+                "",
+            ),
+        )
 
     # 记录用户消息到历史记录
     if event.raw_text and event.raw_text.strip():

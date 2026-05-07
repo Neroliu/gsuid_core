@@ -51,7 +51,7 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     "meme_auto_collect": GsBoolConfig(
         title="自动采集群聊图片",
         desc="开启后自动监听群聊中的图片并入库",
-        data=True,
+        data=False,
     ),
     "meme_vlm_semaphore": GsIntConfig(
         title="VLM 打标并发上限",
