@@ -92,6 +92,15 @@ def ai_tools(
     """
 
     def decorator(fn: F) -> F:
+        # 0. 检查AI是否启用，未启用则跳过工具注册
+        try:
+            from gsuid_core.ai_core.configs.ai_config import ai_config
+
+            if not ai_config.get_config("enable").data:
+                return cast(F, fn)
+        except Exception:
+            pass
+
         # 1. 解析原函数的参数签名
         sig = inspect.signature(fn)
         params = list(sig.parameters.values())
@@ -249,6 +258,15 @@ def ai_alias(name: str, alias: Union[str, List[str]]):
     ai_alias("丝柯克", ['skk', '斯柯克'])
 
     """
+    # 检查AI是否启用，未启用则跳过别名注册
+    try:
+        from gsuid_core.ai_core.configs.ai_config import ai_config
+
+        if not ai_config.get_config("enable").data:
+            return
+    except Exception:
+        pass
+
     if isinstance(alias, str):
         alias = [alias]
 
@@ -295,6 +313,15 @@ def ai_entity(entity: Union[KnowledgePoint, KnowledgeBase]):
         _hash="123456",
     ))
     """
+    # 检查AI是否启用，未启用则跳过实体注册
+    try:
+        from gsuid_core.ai_core.configs.ai_config import ai_config
+
+        if not ai_config.get_config("enable").data:
+            return
+    except Exception:
+        pass
+
     # 自动添加 source="plugin" 标识，表示来自插件注册
     entity["source"] = "plugin"
     _ENTITIES.append(entity)
@@ -445,6 +472,15 @@ def ai_image(entity: ImageEntity):
     if image:
         await bot.send(image)
     """
+    # 检查AI是否启用，未启用则跳过图片注册
+    try:
+        from gsuid_core.ai_core.configs.ai_config import ai_config
+
+        if not ai_config.get_config("enable").data:
+            return
+    except Exception:
+        pass
+
     # 自动添加 source="plugin" 标识
     entity["source"] = "plugin"
     _ENTITIES.append(entity)

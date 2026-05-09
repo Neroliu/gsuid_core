@@ -12,6 +12,7 @@ from gsuid_core.webconsole.web_api import require_auth
 from gsuid_core.utils.plugins_update.git_update import (
     CommitInfo,
     GitStatusInfo,
+    update,
     force_update,
     get_git_status,
     checkout_commit,
@@ -323,6 +324,55 @@ async def force_update_plugin(
     }
 
 
+@app.post("/api/git-update/update/{plugin_name}")
+async def update_plugin(
+    request: Request,
+    plugin_name: str,
+    _user: Dict = Depends(require_auth),
+):
+    """
+    更新单个插件到最新
+
+    执行 git fetch + git pull，如果本地有修改可能会失败。
+    适用于本地无冲突的正常更新场景。
+
+    Args:
+        request: FastAPI 请求对象
+        plugin_name: 插件名称（支持 "gsuid_core" 表示 core 本体）
+        _user: 认证用户信息
+
+    Returns:
+        status: 0成功，1失败
+        data: {success, message, current_commit}
+    """
+    plugin_path = _resolve_plugin_path(plugin_name)
+    if not plugin_path:
+        return {
+            "status": 1,
+            "msg": f"插件 {plugin_name} 不存在",
+            "data": None,
+        }
+
+    success, message = await update(plugin_path)
+
+    # 获取更新后的 commit 信息
+    current_commit = None
+    if success:
+        commit_info = await get_current_commit(plugin_path)
+        if commit_info:
+            current_commit = _format_commit(commit_info)
+
+    return {
+        "status": 0 if success else 1,
+        "msg": message,
+        "data": {
+            "success": success,
+            "message": message,
+            "current_commit": current_commit,
+        },
+    }
+
+
 @app.post("/api/git-update/update-all")
 async def update_all_plugins(
     request: Request,
@@ -331,7 +381,8 @@ async def update_all_plugins(
     """
     一次性更新全部插件到最新
 
-    遍历所有插件（含 core 本体），对每个插件执行强制更新（git reset --hard origin/{branch} + git pull）。
+    遍历所有插件（含 core 本体），对每个插件执行普通更新（git fetch + git pull）。
+    如果本地有修改，git pull 可能会失败并返回错误。
     返回每个插件的更新结果，包括成功/失败状态和更新后的 commit 信息。
 
     Args:
@@ -381,7 +432,7 @@ async def update_all_plugins(
             fail_count += 1
             continue
 
-        success, message = await force_update(plugin_path)
+        success, message = await update(plugin_path)
 
         current_commit = None
         if success:

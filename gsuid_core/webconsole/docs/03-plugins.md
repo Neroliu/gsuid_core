@@ -17,7 +17,7 @@ GET /api/plugins/list
             "description": "插件描述",
             "enabled": true,
             "status": "running",
-            "icon": "base64..."
+            "commit": "a1b2c3d"
         }
     ]
 }
@@ -40,6 +40,7 @@ GET /api/plugins/{plugin_name}
         "name": "插件名称",
         "description": "...",
         "enabled": true,
+        "commit": "a1b2c3d",
         "icon": "base64...",
         "config": {
             "config_key": {

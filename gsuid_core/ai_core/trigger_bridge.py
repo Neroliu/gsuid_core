@@ -235,6 +235,15 @@ def _register_trigger_as_ai_tool(
         sv: SV 实例
         trigger_type: 触发器类型（command/prefix/keyword/fullmatch/suffix/regex 等）
     """
+    # 检查AI是否启用，未启用则跳过触发器工具注册
+    try:
+        from gsuid_core.ai_core.configs.ai_config import ai_config
+
+        if not ai_config.get_config("enable").data:
+            return
+    except Exception:
+        pass
+
     # 取第一个 keyword 作为命令（用于填充 ev.command）
     primary_keyword = keyword[0] if isinstance(keyword, tuple) else keyword
 

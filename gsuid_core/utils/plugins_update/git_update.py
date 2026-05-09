@@ -316,6 +316,44 @@ async def force_update(repo_path: Path) -> tuple[bool, str]:
     return True, message
 
 
+async def update(repo_path: Path) -> tuple[bool, str]:
+    """
+    普通更新仓库。
+
+    仅执行 git pull，适用于本地无冲突的正常更新场景。
+    如果 git pull 失败（如网络问题、凭证问题），会返回错误信息。
+
+    Args:
+        repo_path: 仓库路径
+
+    Returns:
+        (success, message)
+    """
+    if not (repo_path / ".git").exists():
+        return False, "不是有效的 git 仓库"
+
+    # 先尝试 fetch 获取最新远程信息
+    success, message = await git_fetch(repo_path)
+    if not success:
+        return False, f"git fetch 失败: {message}"
+
+    # 执行 git pull
+    success, message = await git_pull(repo_path)
+    if not success:
+        logger.warning(f"[Git Update] git pull 失败: {message}")
+        return False, f"git pull 失败: {message}"
+
+    # 获取更新后的 commit 信息
+    current_commit = await get_current_commit(repo_path)
+    if current_commit:
+        message = f"更新成功，当前版本: {current_commit['short_hash']}"
+    else:
+        message = "更新成功"
+
+    logger.info(f"[Git Update] {message}")
+    return True, message
+
+
 async def get_all_plugins_status() -> List[GitStatusInfo]:
     """
     获取所有插件（包括 core 本体）的 git 状态信息。

@@ -407,6 +407,7 @@ class GsServer:
 
         plugin_config_store.save_all()
         core_config.lazy_write_config()
+
         logger.success("💖 [早柚核心] 插件加载完成!")
 
     async def connect(self, websocket: WebSocket, bot_id: str) -> _Bot:
@@ -570,10 +571,10 @@ def install_packages(packages: List[str], upgrade: bool = False):
     logger.info(f"🚀 [安装/更新依赖] 开始安装以下包: {packages}")
 
     # 定义镜像源列表 (名称, URL)
-    # 顺序: 字节 -> 阿里 -> 清华 -> 官方
+    # 顺序: 阿里 -> 字节 -> 清华 -> 官方
     mirrors = [
-        ("字节源 (Volces)", "https://mirrors.volces.com/pypi/simple/"),
         ("阿里源 (Aliyun)", "https://mirrors.aliyun.com/pypi/simple/"),
+        ("字节源 (Volces)", "https://mirrors.volces.com/pypi/simple/"),
         ("清华源 (Tsinghua)", "https://pypi.tuna.tsinghua.edu.cn/simple"),
         ("官方源 (PyPI)", "https://pypi.org/simple"),
     ]

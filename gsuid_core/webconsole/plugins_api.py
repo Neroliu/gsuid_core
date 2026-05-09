@@ -12,7 +12,7 @@ from fastapi import Body, Query, Depends, Request
 from gsuid_core.sv import SL
 from gsuid_core.webconsole.app_app import app
 from gsuid_core.webconsole.web_api import require_auth
-from gsuid_core.utils.plugins_update._plugins import PLUGINS_PATH, get_local_plugins_list
+from gsuid_core.utils.plugins_update._plugins import PLUGINS_PATH, get_plugin_commit, get_local_plugins_list
 from gsuid_core.utils.plugins_config.gs_config import all_config_list
 from gsuid_core.utils.plugins_update.reload_plugin import reload_plugin
 
@@ -90,7 +90,6 @@ async def get_plugins_list(request: Request, _user: Dict = Depends(require_auth)
 
     for plugin_name, plugin in SL.plugins.items():
         name = plugin_name.lower()
-        icon_base64 = _read_plugin_icon(plugin_name)
 
         tasks.append(
             {
@@ -99,7 +98,7 @@ async def get_plugins_list(request: Request, _user: Dict = Depends(require_auth)
                 "description": f"已加载插件：{plugin_name}",
                 "enabled": plugin.enabled,
                 "status": "running",
-                "icon": icon_base64,
+                "commit": get_plugin_commit(plugin_name),
             }
         )
 
@@ -294,6 +293,7 @@ async def get_plugin_detail(request: Request, plugin_name: str, _user: Dict = De
             "description": f"已加载插件：{actual_plugin_name}",
             "enabled": plugin.enabled,
             "status": "running",
+            "commit": get_plugin_commit(actual_plugin_name),
             "config": plugin_config,
             "config_groups": config_groups,
             "config_names": config_names,

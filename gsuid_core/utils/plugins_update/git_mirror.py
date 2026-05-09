@@ -51,6 +51,7 @@ class PluginGitInfo(TypedDict):
     remote_url: str
     is_git_repo: bool
     mirror: str
+    commit: str
 
 
 async def get_remote_url(repo_path: Path) -> Optional[str]:
@@ -300,9 +301,14 @@ async def get_plugin_git_info(plugin_path: Path) -> PluginGitInfo:
     Returns:
         PluginGitInfo 字典
     """
+    from gsuid_core.utils.plugins_update._plugins import plugin_commit_versions
+
     name = plugin_path.name
     remote_url = await get_remote_url(plugin_path)
     is_git = remote_url is not None
+
+    # 使用启动时获取的 commit 版本（运行版本）
+    commit = plugin_commit_versions.get(name.lower(), "")
 
     return PluginGitInfo(
         name=name,
@@ -310,6 +316,7 @@ async def get_plugin_git_info(plugin_path: Path) -> PluginGitInfo:
         remote_url=remote_url or "",
         is_git_repo=is_git,
         mirror=detect_mirror(remote_url) if remote_url else "unknown",
+        commit=commit,
     )
 
 

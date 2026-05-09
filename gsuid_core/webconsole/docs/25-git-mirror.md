@@ -53,35 +53,40 @@ GET /api/git-mirror/info
                 "path": "/path/to/gsuid_core",
                 "remote_url": "https://gitcode.com/gscore-mirror/gsuid_core",
                 "is_git_repo": true,
-                "mirror": "gitcode"
+                "mirror": "gitcode",
+                "commit": "a1b2c3d"
             },
             {
                 "name": "GenshinUID",
                 "path": "/path/to/plugins/GenshinUID",
                 "remote_url": "ssh://git@ssh.github.com:443/Genshin-bots/GenshinUID.git",
                 "is_git_repo": true,
-                "mirror": "ssh"
+                "mirror": "ssh",
+                "commit": "e5f6g7h"
             },
             {
                 "name": "StarRailUID",
                 "path": "/path/to/plugins/StarRailUID",
                 "remote_url": "https://ghproxy.mihomo.me/https://github.com/xxx/StarRailUID",
                 "is_git_repo": true,
-                "mirror": "ghproxy"
+                "mirror": "ghproxy",
+                "commit": "i9j0k1l2"
             },
             {
                 "name": "ZZZeroUID",
                 "path": "/path/to/plugins/ZZZeroUID",
                 "remote_url": "https://github.com/xxx/ZZZeroUID",
                 "is_git_repo": true,
-                "mirror": "github"
+                "mirror": "github",
+                "commit": "m3n4o5p6"
             },
             {
                 "name": "SomePlugin",
                 "path": "/path/to/plugins/SomePlugin",
                 "remote_url": "",
                 "is_git_repo": false,
-                "mirror": "unknown"
+                "mirror": "unknown",
+                "commit": ""
             }
         ]
     }

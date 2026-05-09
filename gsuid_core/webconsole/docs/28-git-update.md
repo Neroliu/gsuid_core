@@ -359,7 +359,7 @@ POST /api/git-update/force-update/{plugin_name}
 }
 ```
 
-**错误响应**：
+**错误响应**（reset --hard 失败）：
 ```json
 {
     "status": 1,
@@ -372,13 +372,132 @@ POST /api/git-update/force-update/{plugin_name}
 }
 ```
 
+**错误响应**（git fetch 失败，如网络问题）：
+```json
+{
+    "status": 1,
+    "msg": "git fetch 失败: Failed to connect to github.com port 443 after 21059 ms: Could not connect to server",
+    "data": {
+        "success": false,
+        "message": "git fetch 失败: Failed to connect to github.com port 443 after 21059 ms: Could not connect to server",
+        "current_commit": null
+    }
+}
+```
+
+**错误响应**（git pull 失败）：
+```json
+{
+    "status": 1,
+    "msg": "git pull 失败: ...",
+    "data": {
+        "success": false,
+        "message": "git pull 失败: ...",
+        "current_commit": null
+    }
+}
+```
+
+**错误响应**（插件不存在）：
+```json
+{
+    "status": 1,
+    "msg": "插件 NonExistent 不存在",
+    "data": null
+}
+```
+
+> 💡 **提示**：如果普通更新失败，错误信息中可能包含以下内容：
+> - 网络错误（如 "Failed to connect to github.com port 443"）→ 建议检查网络或切换镜像源
+> - 认证错误（如 "Authentication failed"）→ 建议检查 git 凭证配置
+> - 本地冲突（如 "Your local changes to the following files would be overwritten"）→ 使用强制更新会丢失本地修改
+
 ---
 
-## 28.7 一键更新全部插件
+## 28.7 普通更新单个插件
 
-一次性更新全部插件（含 core 本体）到最新版本。对每个插件执行强制更新（`git reset --hard origin/{branch}` + `git pull`），返回每个插件的更新结果。
+更新单个插件到最新版本。执行 `git fetch` + `git pull`。
 
-> ⚠️ **注意**：此操作会对所有插件执行强制更新，**丢弃所有本地修改**，不可恢复。
+适用于本地无冲突的正常更新场景。如果本地有修改，`git pull` 可能会失败。
+
+```http
+POST /api/git-update/update/{plugin_name}
+```
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plugin_name` | `string` | 插件名称。`"gsuid_core"` 表示 core 本体。大小写不敏感 |
+
+**请求参数**：无
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "更新成功，当前版本: f6a1b2c",
+    "data": {
+        "success": true,
+        "message": "更新成功，当前版本: f6a1b2c",
+        "current_commit": {
+            "hash": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
+            "short_hash": "f6a1b2c",
+            "author": "Developer",
+            "date": "2024-01-16 09:00:00 +0800",
+            "message": "feat: 最新功能"
+        }
+    }
+}
+```
+
+**错误响应**（git fetch 失败，如网络问题）：
+```json
+{
+    "status": 1,
+    "msg": "git fetch 失败: Failed to connect to github.com port 443 after 21059 ms: Could not connect to server",
+    "data": {
+        "success": false,
+        "message": "git fetch 失败: Failed to connect to github.com port 443 after 21059 ms: Could not connect to server",
+        "current_commit": null
+    }
+}
+```
+
+**错误响应**（git pull 失败，如本地有冲突）：
+```json
+{
+    "status": 1,
+    "msg": "git pull 失败: error: Your local changes to the following files would be overwritten by merge...",
+    "data": {
+        "success": false,
+        "message": "git pull 失败: error: Your local changes to the following files would be overwritten by merge...",
+        "current_commit": null
+    }
+}
+```
+
+**错误响应**（插件不存在）：
+```json
+{
+    "status": 1,
+    "msg": "插件 NonExistent 不存在",
+    "data": null
+}
+```
+
+---
+
+## 28.8 一键更新全部插件
+
+一次性更新全部插件（含 core 本体）到最新版本。对每个插件执行普通更新（`git fetch` + `git pull`），返回每个插件的更新结果。
+
+> ⚠️ **注意**：如果某个插件本地有修改导致 `git pull` 失败，该插件会返回失败，但不会影响其他插件。如需强制更新有冲突的插件，请使用"强制更新"接口。
+
+> 💡 **提示**：如果更新失败，错误信息中可能包含以下内容：
+> - 网络错误（如 "Failed to connect to github.com port 443"）→ 建议检查网络或切换镜像源
+> - 本地冲突（如 "Your local changes to the following files would be overwritten"）→ 建议使用强制更新（但会丢失本地修改）
+> - 认证错误（如 "Authentication failed"）→ 建议检查 git 凭证配置
 
 ```
 POST /api/git-update/update-all
@@ -399,7 +518,7 @@ POST /api/git-update/update-all
             {
                 "name": "gsuid_core",
                 "success": true,
-                "message": "强制更新成功，当前版本: f6a1b2c",
+                "message": "更新成功，当前版本: f6a1b2c",
                 "current_commit": {
                     "hash": "f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1",
                     "short_hash": "f6a1b2c",
@@ -411,7 +530,7 @@ POST /api/git-update/update-all
             {
                 "name": "GenshinUID",
                 "success": true,
-                "message": "强制更新成功，当前版本: b2c3d4e",
+                "message": "更新成功，当前版本: b2c3d4e",
                 "current_commit": {
                     "hash": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
                     "short_hash": "b2c3d4e",
@@ -423,7 +542,7 @@ POST /api/git-update/update-all
             {
                 "name": "SomePlugin",
                 "success": true,
-                "message": "强制更新成功，当前版本: c3d4e5f",
+                "message": "更新成功，当前版本: c3d4e5f",
                 "current_commit": {
                     "hash": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
                     "short_hash": "c3d4e5f",
@@ -450,13 +569,13 @@ POST /api/git-update/update-all
             {
                 "name": "gsuid_core",
                 "success": true,
-                "message": "强制更新成功，当前版本: f6a1b2c",
+                "message": "更新成功，当前版本: f6a1b2c",
                 "current_commit": { "..." : "..." }
             },
             {
                 "name": "GenshinUID",
                 "success": true,
-                "message": "强制更新成功，当前版本: b2c3d4e",
+                "message": "更新成功，当前版本: b2c3d4e",
                 "current_commit": { "..." : "..." }
             },
             {
@@ -520,7 +639,7 @@ POST /api/git-update/update-all
 │  │  ...                                                           │ │
 │  └──────────────────────────────────────────────────────────────┘ │
 │                                                                  │
-│  [ 🔄 强制更新到最新版本 ]  [ 📦 一键更新全部插件 ]                  │
+│  [ 🔄 更新到最新版本 ]  [ ⚠️ 强制更新 ]  [ 📦 一键更新全部插件 ]        │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -601,14 +720,48 @@ POST /api/git-update/update-all
   └─→ 用户取消 → 无操作
 ```
 
-#### 4. 一键更新全部插件
+#### 4. 普通更新
+
+```
+用户点击"更新到最新版本"按钮
+  │
+  ├─→ POST /api/git-update/update/{plugin_name}
+  │     │
+  │     ├─→ 成功
+  │     │     - 显示成功提示，包含最新 commit 信息
+  │     │     - 刷新 commit 列表
+  │     │       GET /api/git-update/commits/{plugin_name}
+  │     │
+  │     └─→ 失败
+  │           - 显示错误提示
+  │           - 根据错误信息建议：
+  │             · 网络错误 → 建议检查网络或切换镜像源
+  │             · 本地冲突 → 建议使用强制更新（但会丢失本地修改）
+  │             · 认证错误 → 建议检查 git 凭证配置
+```
+
+#### 5. 一键更新全部插件
 
 ```
 用户点击"一键更新全部插件"按钮
   │
-  ├─→ 弹出确认对话框
-  │     "确认更新全部插件？"
-  │     "此操作将对所有插件执行强制更新，丢弃所有本地修改，不可恢复！"
+  ├─→ POST /api/git-update/update-all
+  │     │
+  │     ├─→ 成功（status=0）
+  │     │     - 显示成功提示 "全部更新完成，共 N 个成功"
+  │     │     - 刷新插件状态列表
+  │     │       GET /api/git-update/status
+  │     │
+  │     ├─→ 部分失败（status=1）
+  │     │     - 显示结果摘要 "N 个成功，M 个失败"
+  │     │     - 展示失败插件列表及错误原因
+  │     │     - 对每个失败的插件提供"重试"或"强制更新"选项
+  │     │     - 刷新插件状态列表
+  │     │       GET /api/git-update/status
+  │     │
+  │     └─→ 无插件（status=2）
+  │           - 显示提示 "没有可更新的插件"
+```
   │
   ├─→ 用户确认
   │     │
@@ -639,8 +792,22 @@ POST /api/git-update/update-all
 | 插件不是 git 仓库 | 在插件选择器中禁用该选项，或显示"非 git 仓库"提示 |
 | 插件不存在 | 显示 toast 错误提示 "插件 xxx 不存在" |
 | 无效的 commit hash | 显示 toast 错误提示，提示用户检查 hash 值 |
-| git fetch 失败 | 显示错误提示，建议检查网络连接或镜像源配置 |
+| git fetch 失败（网络问题） | 显示错误提示，建议检查网络连接或切换镜像源 |
+| git pull 失败（本地冲突） | 提示用户可以选择"强制更新"（但会丢失本地修改），或者先提交/stash 本地修改 |
+| git pull 失败（Already up to date） | 显示提示 "已是最新版本" |
+| 认证失败 | 提示用户检查 git 凭证配置 |
 | 回退后需要恢复 | 提示用户使用"强制更新"回到最新版本 |
+
+### 批量更新失败时的用户引导
+
+当用户点击"一键更新全部插件"后，如果部分插件更新失败（如网络问题或本地冲突），前端应该：
+
+1. **显示汇总信息**：列出成功和失败的插件数量
+2. **对失败插件提供操作选项**：
+   - 对于网络问题导致的失败，提供"切换镜像源"链接
+   - 对于本地冲突导致的失败，提供"强制更新"选项（需用户确认会丢失本地修改）
+   - 对于认证问题，提供"检查 git 凭证"提示
+3. **允许重试**：对失败的插件提供单独重试按钮
 
 ### 与 Git 镜像源管理的关系
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import aiohttp
 
-from gsuid_core.gss import gss
 from gsuid_core.logger import logger
+from gsuid_core.server import _DefHook, core_start_def
 from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
 
 from .api import CORE_PATH, PLUGINS_PATH, plugins_lib
@@ -23,10 +23,14 @@ from .git_async import (
     git_diff_commits,
     git_is_valid_repo,
     git_get_current_branch,
+    git_get_current_commit,
 )
 from .reload_plugin import reload_plugin
 
 plugins_list: Dict[str, Dict[str, str]] = {}
+
+# 插件 commit 版本信息（仅在运行时内部流转，不持久化）
+plugin_commit_versions: Dict[str, str] = {}
 
 
 def _parse_git_error(message: str, plugin_name: str, operation: str = "pull") -> List[str]:
@@ -422,6 +426,8 @@ async def install_plugins(plugins: Dict[str, str]) -> str:
 
     logger.info(f"插件{plugin_name}安装成功!")
     if is_reload:
+        from gsuid_core.gss import gss
+
         gss.load_plugin(path)
     return f"插件{plugin_name}安装成功!发送[gs重启]以应用! (如已开启自动重载插件则无需重启)"
 
@@ -648,3 +654,52 @@ async def update_plugins(
         log_limit,
     )
     return log_list
+
+
+# 注册到 on_core_start 钩子，优先级最高(priority=0)
+async def _init_plugin_commit_versions() -> None:
+    """
+    在启动时初始化所有插件和本体的 commit 版本信息。
+    该函数仅在运行时内部流转，不持久化到任何存储。
+    """
+    global plugin_commit_versions
+
+    # 获取 core 的 commit 版本
+    core_commit = await git_get_current_commit(CORE_PATH)
+    if core_commit:
+        plugin_commit_versions["core"] = core_commit
+
+    # 获取所有插件的 commit 版本
+    for plugin_dir in PLUGINS_PATH.iterdir():
+        if plugin_dir.is_dir() and (plugin_dir / ".git").exists():
+            commit = await git_get_current_commit(plugin_dir)
+            if commit:
+                plugin_commit_versions[plugin_dir.name.lower()] = commit
+
+    # 同时检查 buildin_plugins
+    buildin_path = CORE_PATH / "buildin_plugins"
+    if buildin_path.exists():
+        for plugin_dir in buildin_path.iterdir():
+            if plugin_dir.is_dir() and (plugin_dir / ".git").exists():
+                commit = await git_get_current_commit(plugin_dir)
+                if commit:
+                    plugin_commit_versions[plugin_dir.name.lower()] = commit
+
+    logger.info(f"[Git] 已初始化插件 commit 版本信息，共 {len(plugin_commit_versions)} 个")
+
+
+# 注册到 on_core_start 钩子，优先级最高
+core_start_def.add(_DefHook(priority=0, func=_init_plugin_commit_versions))
+
+
+def get_plugin_commit(plugin_name: str) -> str:
+    """
+    获取指定插件的 commit 版本。
+
+    Args:
+        plugin_name: 插件名称
+
+    Returns:
+        commit hash 短格式，未找到则返回空字符串
+    """
+    return plugin_commit_versions.get(plugin_name.lower(), "")

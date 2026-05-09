@@ -48,6 +48,12 @@ async def run_git(repo_path: Path, *args: str, timeout: int = GIT_TIMEOUT) -> tu
 
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # 防止 credential helper 请求凭证导致阻塞
+    env["GIT_CREDENTIAL_HELPER"] = "cat"
+    # 设置 HTTP 超时
+    env["GIT_HTTP_TIMEOUT"] = "30"
+    # 使用简单的 User-Agent 避免某些服务器拒绝
+    env["GIT_HTTP_USER_AGENT"] = "git/gsuid_core"
 
     process = await asyncio.create_subprocess_exec(
         "git",
@@ -289,6 +295,27 @@ async def git_get_current_branch(repo_path: Path) -> str:
             return branch_name
 
     return "main"
+
+
+async def git_get_current_commit(repo_path: Path) -> str:
+    """
+    获取仓库当前 commit hash（短格式）。
+
+    Args:
+        repo_path: 仓库路径
+
+    Returns:
+        当前 commit hash（7位短格式），如果不是 git 仓库则返回空字符串
+    """
+    if not (repo_path / ".git").exists():
+        return ""
+
+    returncode, stdout, _ = await run_git(repo_path, "rev-parse", "--short", "HEAD")
+
+    if returncode != 0 or not stdout:
+        return ""
+
+    return stdout
 
 
 async def git_get_log(
