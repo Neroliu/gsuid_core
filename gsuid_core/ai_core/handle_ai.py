@@ -281,8 +281,14 @@ async def handle_ai_chat(bot: Bot, event: Event):
 
             # 步骤 8: 发送回复
             if chat_result:
-                await send_chat_result(bot, chat_result)
-                logger.info(f"🧠 [GsCore][AI] 回复已发送 (模式: {intent})")
+                # 拦截沉默信号
+                result_text = chat_result if isinstance(chat_result, str) else str(chat_result)
+                if result_text.strip() == "<SILENCE>":
+                    logger.info("🧠 [GsCore][AI] 角色选择沉默，不发送回复")
+                    # 情绪仍然正常更新，只是不发消息
+                else:
+                    await send_chat_result(bot, chat_result)
+                    logger.info(f"🧠 [GsCore][AI] 回复已发送 (模式: {intent})")
 
             # ============================================================
             # 步骤 9: 更新 Persona 情绪状态（异步，不阻塞主流程）

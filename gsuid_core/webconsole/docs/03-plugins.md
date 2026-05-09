@@ -161,6 +161,35 @@ POST /api/plugins/{plugin_name}/toggle
 POST /api/plugins/{plugin_name}/reload
 ```
 
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `plugin_name` | string | ✅ | 插件名称 |
+
+**响应**：
+```json
+{
+    "status": 0,
+    "msg": "✨ 已重载插件 xxx!"
+}
+```
+
+**失败响应**：
+```json
+{
+    "status": 0,
+    "msg": "❌ 未知的插件类型 xxx"
+}
+```
+或者
+```json
+{
+    "status": 0,
+    "msg": "❌ 重载失败: xxx"
+}
+```
+
 ---
 
 ## 3.8 安装插件

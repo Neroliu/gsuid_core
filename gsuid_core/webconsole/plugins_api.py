@@ -14,6 +14,7 @@ from gsuid_core.webconsole.app_app import app
 from gsuid_core.webconsole.web_api import require_auth
 from gsuid_core.utils.plugins_update._plugins import PLUGINS_PATH, get_local_plugins_list
 from gsuid_core.utils.plugins_config.gs_config import all_config_list
+from gsuid_core.utils.plugins_update.reload_plugin import reload_plugin
 
 # ====================
 # 辅助函数
@@ -819,6 +820,24 @@ async def toggle_plugin(request: Request, plugin_name: str, enabled: bool, _user
     return {"status": 0, "msg": f"插件已{'启用' if enabled else '禁用'}"}
 
 
+@app.post("/api/plugins/{plugin_name}/reload")
+async def reload_plugin_api(request: Request, plugin_name: str, _user: Dict = Depends(require_auth)):
+    """
+    重新加载指定插件
+
+    Args:
+        request: FastAPI 请求对象
+        plugin_name: 插件名称
+        _user: 认证用户信息
+
+    Returns:
+        status: 0成功
+        msg: 操作结果信息
+    """
+    result = reload_plugin(plugin_name)
+    return {"status": 0, "msg": result}
+
+
 # ===================
 # Plugin Store APIs
 # ===================
@@ -929,12 +948,14 @@ async def install_plugin(
         msg: 操作结果信息
     """
     try:
-        from gsuid_core.utils.plugins_update._plugins import install_plugin
+        from gsuid_core.utils.plugins_update._plugins import install_plugin as _install_plugin
 
-        result = await install_plugin(plugin_id)
+        result = await _install_plugin(plugin_id)
 
         if result == 0:
-            return {"status": 0, "msg": "插件安装成功"}
+            # 安装成功后重载插件
+            reload_result = reload_plugin(plugin_id)
+            return {"status": 0, "msg": f"插件安装成功，已重载: {reload_result}"}
         else:
             return {"status": 1, "msg": "插件安装失败"}
     except Exception as e:
