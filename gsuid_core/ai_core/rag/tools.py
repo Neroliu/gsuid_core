@@ -116,7 +116,7 @@ async def sync_tools(tools_map: Dict[str, ToolBase]) -> None:
 
             # 生成向量：使用 name + description
             desc_and_name = f"{tool_name}\n{tool.description}"
-            vector = list(embedding_model.embed([desc_and_name]))[0]
+            vector = list(await embedding_model.aembed([desc_and_name]))[0]
 
             # 构建payload
             payload = {"name": tool.name, "description": tool.description, "_hash": current_hash}
@@ -230,7 +230,7 @@ async def search_tools(
         raise RuntimeError("AI功能未启用，无法搜索工具")
 
     logger.info(f"🧠 [Tools] 正在查询: {query}, threshold={threshold}, limit={limit}, debug={debug}")
-    query_vec = list(embedding_model.embed([query]))[0]
+    query_vec = list(await embedding_model.aembed([query]))[0]
 
     # 如果启用 debug，使用大 limit 获取所有工具以便查看分数
     if debug:

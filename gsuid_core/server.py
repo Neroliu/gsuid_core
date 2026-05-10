@@ -438,14 +438,65 @@ class GsServer:
         return bot
 
     async def disconnect(self, bot_id: str):
+        """断开 Bot 连接并清理相关资源。
+
+        修复要点：
+        1. 取消 _send_task，防止孤儿协程持续占用内存
+        2. 清理 Bot.instances / mutiply_instances / mutiply_map 中属于该 bot_id 的条目
+        """
+        from gsuid_core.bot import Bot
+
         if bot_id in self.active_ws:
             try:
                 await self.active_ws[bot_id].close(code=1001)
             except Exception:
                 pass
             del self.active_ws[bot_id]
+
         if bot_id in self.active_bot:
+            bot = self.active_bot[bot_id]
+
+            # 1. 取消发送 worker，防止孤儿 Task
+            if bot._send_task and not bot._send_task.done():
+                bot._send_task.cancel()
+                try:
+                    await bot._send_task
+                except asyncio.CancelledError:
+                    pass
+
+            # 2. 取消所有后台任务并等待其真正结束
+            tasks_to_cancel = [t for t in bot.bg_tasks if not t.done()]
+            for t in tasks_to_cancel:
+                t.cancel()
+            for t in tasks_to_cancel:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # 3. 清理 Bot.instances 中属于该 bot_id 的条目
+            session_ids_to_remove = [sid for sid, b in Bot.instances.items() if b.bot_id == bot_id]
+            for sid in session_ids_to_remove:
+                del Bot.instances[sid]
+
+            # 4. 清理 Bot.mutiply_instances 中属于该 bot_id 的条目
+            mutiply_ids_to_remove = [sid for sid, b in Bot.mutiply_instances.items() if b.bot_id == bot_id]
+            for sid in mutiply_ids_to_remove:
+                del Bot.mutiply_instances[sid]
+
+            # 5. 清理 Bot.mutiply_map 中对应的映射
+            # 假设：mutiply_map 的结构为 {gid: session_id}，与 mutiply_instances 的 key 对应
+            map_keys_to_remove = [gid for gid, sid in Bot.mutiply_map.items() if sid in mutiply_ids_to_remove]
+            for gid in map_keys_to_remove:
+                del Bot.mutiply_map[gid]
+            if mutiply_ids_to_remove and not map_keys_to_remove:
+                logger.warning(
+                    f"[disconnect] mutiply_instances 已清理 {len(mutiply_ids_to_remove)} 条，"
+                    f"但 mutiply_map 中未找到对应映射，map 可能泄漏"
+                )
+
             del self.active_bot[bot_id]
+
         logger.warning(f"{bot_id}已中断！")
 
     async def send(self, message: str, bot_id: str):

@@ -128,6 +128,7 @@ async def _get_or_create_ai_session(
         persona_name=persona_name,
         create_by="Chat",
         task_level="high",
+        session_id=session_id,
     )
 
     history_manager.set_ai_session(session_id, session)

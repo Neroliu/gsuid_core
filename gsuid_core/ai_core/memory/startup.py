@@ -22,6 +22,9 @@ async def init_memory_system():
     2. 确保 Qdrant Collection 存在
     3. 创建 SQLAlchemy 数据库表
     4. 启动 IngestionWorker 后台任务
+
+    注意：on_core_start 钩子由 core_start_execute() 按优先级顺序 await，
+    同一钩子函数不会并发执行，因此无需加锁保护 _ingestion_worker。
     """
     from gsuid_core.ai_core.rag.base import client, init_embedding_model
 
@@ -47,15 +50,18 @@ async def init_memory_system():
 
     # 3. 启动 IngestionWorker 后台任务（在独立线程中运行，避免 LLM 调用阻塞主事件循环）
     global _ingestion_worker
-    try:
-        from .ingestion.worker import IngestionWorker
+    if _ingestion_worker is not None:
+        logger.info("🧠 [Memory] IngestionWorker 已存在，跳过重复启动")
+    else:
+        try:
+            from .ingestion.worker import IngestionWorker
 
-        _ingestion_worker = IngestionWorker()
-        _ingestion_worker.start_in_thread()
-        logger.info("🧠 [Memory] IngestionWorker 后台任务已启动（独立线程）")
-    except Exception as e:
-        logger.error(f"🧠 [Memory] IngestionWorker 启动失败: {e}")
-        return
+            _ingestion_worker = IngestionWorker()
+            _ingestion_worker.start_in_thread()
+            logger.info("🧠 [Memory] IngestionWorker 后台任务已启动（独立线程）")
+        except Exception as e:
+            logger.error(f"🧠 [Memory] IngestionWorker 启动失败: {e}")
+            return
 
     logger.info("🧠 [Memory] 记忆系统初始化完成")
 

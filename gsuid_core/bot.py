@@ -105,12 +105,20 @@ class _Bot:
         self.logger = GsLogger(self.bot_id, ws)
         self.queue = asyncio.queues.PriorityQueue()
         self.send_dict = {}
-        self.bg_tasks = set()
+        self.bg_tasks: set[asyncio.Task] = set()
         self.sem = asyncio.Semaphore(10)
         self._shutdown_event: Optional[asyncio.Event] = None
         # 独立发送队列：所有 WebSocket 发送操作通过此队列串行化执行
         self._send_queue: asyncio.queues.Queue = asyncio.queues.Queue()
         self._send_task: Optional[asyncio.Task] = None
+
+    def _add_bg_task(self, task: asyncio.Task) -> None:
+        """将后台任务加入 bg_tasks，并注册完成时自动移除的回调。
+
+        防止 Task 完成后仍被 bg_tasks 强引用，导致 set 持续增长。
+        """
+        self.bg_tasks.add(task)
+        task.add_done_callback(self.bg_tasks.discard)
 
     def set_shutdown_event(self, event: asyncio.Event):
         """设置 shutdown 事件，用于优雅关闭"""
@@ -340,7 +348,7 @@ class _Bot:
                 from gsuid_core.ai_core.memory import observe
 
                 try:
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         observe(
                             content=message_list_to_str(mr),
                             speaker_id=f"__assistant_{bot_id}__",
@@ -350,6 +358,7 @@ class _Bot:
                             message_type="group_msg" if target_type == "group" else "private_msg",
                         )
                     )
+                    self._add_bg_task(task)
                 except Exception:
                     pass  # Observer 失败不应影响主流程
             # ============================================
@@ -658,7 +667,13 @@ class Bot:
             self.receive_tag = True
             self.instances[self.session_id] = self
             self.event = asyncio.Event()
-            return await self.wait_for_key(timeout)
+            try:
+                result = await self.wait_for_key(timeout)
+            finally:
+                # 无论正常返回还是超时异常，都清理单轮交互引用
+                self.receive_tag = False
+                self.instances.pop(self.session_id, None)
+            return result
 
     async def send(
         self,

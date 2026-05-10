@@ -21,3 +21,5 @@ ANTHROPIC_CONFIGS_PATH = get_res_path(AI_CORE_PATH / "anthropic_config")
 MCP_CONFIGS_PATH = get_res_path(AI_CORE_PATH / "mcp_configs")
 # 杂项路径
 MISC_PATH = get_res_path(AI_CORE_PATH / "misc")
+# AI Session 日志存放路径
+AI_SESSION_LOGS_PATH = get_res_path(AI_CORE_PATH / "session_logs")

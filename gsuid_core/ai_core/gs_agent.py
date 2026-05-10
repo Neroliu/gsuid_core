@@ -34,6 +34,7 @@ from gsuid_core.ai_core.models import ToolContext
 from gsuid_core.ai_core.skills import skills_toolset
 from gsuid_core.ai_core.rag.tools import ToolList, search_tools, get_main_agent_tools
 from gsuid_core.ai_core.configs.models import get_model_for_task
+from gsuid_core.ai_core.session_logger import AISessionLogger
 from gsuid_core.ai_core.persona.prompts import CHARACTER_BUILDING_TEMPLATE
 from gsuid_core.ai_core.configs.ai_config import ai_config
 
@@ -174,6 +175,7 @@ class GsCoreAIAgent:
         max_history: int = 20,
         create_by: str = "LLM",
         task_level: Literal["high", "low"] = "high",
+        session_id: Optional[str] = None,
     ):
         self.history: List[ModelMessage] = []
         self.max_history = max_history
@@ -186,10 +188,23 @@ class GsCoreAIAgent:
         self.task_level: Literal["high", "low"] = task_level  # 任务级别，用于选择对应的模型配置
 
         self.create_by = create_by
+        self.session_id: Optional[str] = session_id
 
         self.model = openai_chat_model
         if self.model is None:
             self.model = get_model_for_task(task_level)
+
+        # 初始化会话日志记录器
+        self._session_logger: Optional[AISessionLogger] = None
+        if session_id is not None:
+            self._session_logger = AISessionLogger(
+                session_id=session_id,
+                system_prompt=system_prompt,
+                persona_name=persona_name,
+                create_by=create_by,
+            )
+            if system_prompt is not None:
+                self._session_logger.log_system_prompt(system_prompt)
 
     def extract_history(self):
         if self.max_history <= 0:
@@ -340,6 +355,11 @@ class GsCoreAIAgent:
         truncated_msg = _truncate_message_for_log(final_user_message)
         logger.trace(f"🧠[GsCoreAIAgent] 用户消息: {truncated_msg}")
 
+        # 记录用户输入到 session logger
+        if self._session_logger is not None:
+            self._session_logger.log_run_start(final_user_message)
+            self._session_logger.log_user_input(final_user_message)
+
         if tools is None:
             tools = []
 
@@ -402,6 +422,9 @@ class GsCoreAIAgent:
                     if isinstance(node, ModelRequestNode):
                         logger.debug("🧠 [GsCoreAIAgent] ⚡ 触发节点: ModelRequestNode")
 
+                        if self._session_logger is not None:
+                            self._session_logger.log_node_transition("ModelRequestNode")
+
                         for part in node.request.parts:
                             if isinstance(part, ToolReturnPart):
                                 # 返回的可能是对象也可能是字符串，这里为了打印转成 str
@@ -411,6 +434,10 @@ class GsCoreAIAgent:
                                 logger.debug(
                                     f"[✅ 工具执行完毕]: 工具名称='{part.tool_name}', 结果给到Agent={tool_result_str}"
                                 )
+                                if self._session_logger is not None:
+                                    self._session_logger.log_tool_return(
+                                        part.tool_name, part.content, part.tool_call_id
+                                    )
 
                         logger.debug("🧠  ▶ [发起请求]: 正在等待大模型思考...")
 
@@ -419,23 +446,32 @@ class GsCoreAIAgent:
                     elif isinstance(node, CallToolsNode):
                         logger.debug("🧠 [GsCoreAIAgent] ⚡ 触发节点: CallToolsNode")
 
+                        if self._session_logger is not None:
+                            self._session_logger.log_node_transition("CallToolsNode")
+
                         # 遍历大模型返回的具体片段 (Parts)
                         for part in node.model_response.parts:
                             # 拦截到模型即将调用工具
                             if isinstance(part, ToolCallPart):
                                 logger.debug(f"[🔧 大模型请求调用工具]: 工具名称='{part.tool_name}', 参数={part.args}")
                                 _tool_call_list.append(part.tool_name)
+                                if self._session_logger is not None:
+                                    self._session_logger.log_tool_call(part.tool_name, part.args, part.tool_call_id)
 
                             # 大模型直接输出文本
                             elif isinstance(part, TextPart):
                                 _text = part.content.strip()
                                 logger.debug(f"🧠 [大模型文本]: {_text}")
+                                if self._session_logger is not None:
+                                    self._session_logger.log_text_output(_text)
                                 if bot and _text and return_mode in ["always", "by_bot"]:
                                     await send_chat_result(bot, _text)
 
                             elif isinstance(part, ThinkingPart):
                                 _thinking = part.content.strip()
                                 logger.trace(f"🧠 [大模型思考]: {_thinking}")
+                                if self._session_logger is not None:
+                                    self._session_logger.log_thinking(_thinking)
                                 if bot and _thinking:
                                     pass
 
@@ -443,6 +479,8 @@ class GsCoreAIAgent:
                     elif isinstance(node, End):
                         logger.debug("🧠 [GsCoreAIAgent] ⚡ 触发节点: End")
                         logger.debug("  ✅ [运行结束]: 最终结果生成完毕")
+                        if self._session_logger is not None:
+                            self._session_logger.log_node_transition("End")
 
             # 遍历完成后，直接从 agent_run 中获取最终结果
             result = agent_run.result
@@ -469,7 +507,12 @@ class GsCoreAIAgent:
                                 input_tokens=input_tokens,
                                 output_tokens=output_tokens,
                             )
-                            statistics_manager.record_token_usage
+                            if self._session_logger is not None:
+                                self._session_logger.log_token_usage(
+                                    input_tokens,
+                                    output_tokens,
+                                    self.model.model_name if self.model else "unknown",
+                                )
                     except AttributeError as e:
                         # result 没有 usage 属性（如 pydantic_graph End 节点返回的结果）
                         logger.info(f"📊 [GsCoreAIAgent] result.usage 访问失败: {e}")
@@ -479,12 +522,19 @@ class GsCoreAIAgent:
 
                 # 当 return_model 指定时，直接返回 Pydantic 模型实例
                 if output_type is not None:
+                    if self._session_logger is not None:
+                        self._session_logger.log_run_end(result.output)
+                        self._session_logger.log_result(result.output, _tool_call_list)
                     return result.output
 
                 # 始终返回字符串类型
                 result_msg = str(result.output).strip()
                 if _tool_call_list:
                     result_msg += f"\n\n（🔧 本次执行工具调用列表: {'、'.join(_tool_call_list)}）"
+
+                if self._session_logger is not None:
+                    self._session_logger.log_run_end(result_msg)
+                    self._session_logger.log_result(result_msg, _tool_call_list)
 
                 if return_mode in ["by_bot"] and bot and ev:
                     return ""
@@ -497,6 +547,8 @@ class GsCoreAIAgent:
             # 达到限制后的处理逻辑
             logger.warning(f"🧠 [PydanticAI] Agent 达到最高思考轮数限制 {limits.request_limit}")
             statistics_manager.record_error(error_type="usage_limit")
+            if self._session_logger is not None:
+                self._session_logger.log_error("usage_limit", f"达到最高思考轮数限制 {limits.request_limit}")
 
             # 安抚用户
             if bot:
@@ -526,6 +578,8 @@ class GsCoreAIAgent:
             except Exception as e:
                 # 如果强制总结还报错（比如最后一次它还死活要调工具导致再次超限），再使用保底话术
                 logger.error(f"🧠 [PydanticAI] 强制总结失败: {e}")
+                if self._session_logger is not None:
+                    self._session_logger.log_error("fallback_failed", str(e))
                 error_msg = "⚠️ 这个问题太复杂了，目前获取到的信息不足以给出准确答案。"
                 "可以尝试提高思维链长度，或者尝试其他方法解决问题。"
                 return error_msg
@@ -534,6 +588,8 @@ class GsCoreAIAgent:
             # HTTP 请求超时
             logger.warning(f"🧠 [PydanticAI] Agent 运行异常: 请求超时 {e}")
             statistics_manager.record_error(error_type="timeout")
+            if self._session_logger is not None:
+                self._session_logger.log_error("timeout", str(e))
             return "执行出错: 请求超时"
 
         except httpx.HTTPError as e:
@@ -542,9 +598,13 @@ class GsCoreAIAgent:
             if "rate" in error_str or "429" in error_str or "limit" in error_str:
                 logger.warning(f"🧠 [PydanticAI] Agent 运行异常: Rate Limit {e}")
                 statistics_manager.record_error(error_type="rate_limit")
+                if self._session_logger is not None:
+                    self._session_logger.log_error("rate_limit", str(e))
             else:
                 logger.warning(f"🧠 [PydanticAI] Agent 运行异常: 网络错误 {e}")
                 statistics_manager.record_error(error_type="network_error")
+                if self._session_logger is not None:
+                    self._session_logger.log_error("network_error", str(e))
             return f"执行出错: {str(e)}"
 
         except Exception as e:
@@ -554,6 +614,8 @@ class GsCoreAIAgent:
                 statistics_manager.record_error(error_type="api_529_error")
             else:
                 statistics_manager.record_error(error_type="agent_error")
+            if self._session_logger is not None:
+                self._session_logger.log_error("agent_error", str(e))
             return f"执行出错: {str(e)}"
 
     @overload
@@ -628,6 +690,7 @@ def create_agent(
     create_by: str = "LLM",
     max_history: int = 20,
     task_level: Literal["high", "low"] = "high",
+    session_id: Optional[str] = None,
 ) -> GsCoreAIAgent:
     """
     创建 PydanticAI Agent 实例
@@ -639,6 +702,7 @@ def create_agent(
         max_iterations: 最大迭代次数限制，None 时使用配置默认值
         persona_name: Persona 名称（用于热重载检测）
         task_level: 任务级别，"high"表示高级任务，"low"表示低级任务
+        session_id: 会话 ID，用于关联 session 日志
 
     Returns:
         PydanticAIAgent 实例
@@ -656,6 +720,7 @@ def create_agent(
         create_by=create_by,
         max_history=max_history,
         task_level=task_level,
+        session_id=session_id,
     )
 
 
@@ -675,6 +740,7 @@ async def build_new_persona(query: str) -> str:
         system_prompt=CHARACTER_BUILDING_TEMPLATE,
         create_by="BuildPersona",
         task_level="high",
+        session_id="build_persona",
     )
     response = await agent.run(query)
     return response.strip()

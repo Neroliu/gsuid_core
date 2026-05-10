@@ -1,3 +1,4 @@
+import json
 from typing import Any, List, Optional
 from datetime import datetime
 
@@ -9,6 +10,8 @@ from gsuid_core.ai_core.gs_agent import GsCoreAIAgent, create_agent
 from gsuid_core.ai_core.statistics import statistics_manager
 from gsuid_core.ai_core.memory.scope import ScopeType, make_scope_key
 from gsuid_core.ai_core.memory.config import memory_config
+from gsuid_core.ai_core.persona.prompts import ROLE_PLAYING_START
+from gsuid_core.ai_core.persona.resource import load_persona
 from gsuid_core.utils.database.base_models import async_maker
 from gsuid_core.ai_core.memory.ingestion.hiergraph import AIMemHierarchicalGraphMeta
 
@@ -114,10 +117,19 @@ async def run_heartbeat(
         logger.debug("🫀 [Heartbeat] 无历史记录，跳过")
         return None
 
-    persona_text = session.system_prompt
-    if not persona_text:
-        logger.warning("🫀 [Heartbeat] 无法获取人设文本，跳过")
+    persona_name = session.persona_name
+    if not persona_name:
+        logger.warning("🫀 [Heartbeat] 无法获取角色名称，跳过")
         return None
+
+    # 决策阶段只使用纯人设（角色扮演开始 + 角色资料），
+    # 避免完整的 system_prompt 中的工具调用规范、<SILENCE> 规则等执行层约束污染决策。
+    persona_content = await load_persona(persona_name)
+    if not persona_content:
+        logger.warning("🫀 [Heartbeat] 无法加载角色资料，跳过")
+        return None
+
+    persona_text = f"{ROLE_PLAYING_START}\n{persona_content}"
 
     # 两个阶段共用同一份上下文，只格式化一次
     history_context = format_history_for_agent(history=history)
@@ -151,7 +163,16 @@ async def run_heartbeat(
         logger.debug("🫀 [Heartbeat] 决策阶段无返回，跳过")
         return None
 
-    decision = extract_json_from_text(result)
+    # 模型输出 <SILENCE> 表示选择不发言，直接跳过
+    if result.strip() == "<SILENCE>":
+        logger.debug("🫀 [Heartbeat] 模型输出 <SILENCE>，保持沉默")
+        return None
+
+    try:
+        decision = extract_json_from_text(result)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"🫀 [Heartbeat] 决策结果 JSON 解析失败: {e}, raw={result!r}")
+        return None
     mood: str = decision["mood"]
     should_speak: bool = decision["should_speak"]
 

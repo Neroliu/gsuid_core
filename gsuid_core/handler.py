@@ -68,12 +68,13 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
     from gsuid_core.ai_core.meme.observer import observe_message_for_memes
 
     if enable_ai:
-        asyncio.create_task(
+        meme_task = asyncio.create_task(
             observe_message_for_memes(
                 event,
                 "",
             ),
         )
+        ws._add_bg_task(meme_task)
 
     # 记录用户消息到历史记录
     if event.raw_text and event.raw_text.strip():
@@ -131,7 +132,7 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
                 pass
             else:
                 if is_enable_memory and memory_config.observer_enabled and "被动感知" in memory_mode:
-                    asyncio.create_task(
+                    mem_task = asyncio.create_task(
                         observe(
                             content=event.raw_text,
                             speaker_id=str(event.user_id),
@@ -141,6 +142,7 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
                             message_type="group_msg" if event.group_id else "private_msg",
                         )
                     )
+                    ws._add_bg_task(mem_task)
         # ============================================
 
     if event.user_pm == 0:

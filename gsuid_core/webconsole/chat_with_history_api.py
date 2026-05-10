@@ -134,6 +134,7 @@ async def chatWithHistory(req: Dict):
             create_by="TEST",
             max_history=0,
             task_level="high",
+            session_id=f"test_{user_id}",
         )
 
         if history:

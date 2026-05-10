@@ -365,6 +365,8 @@ class HistoryManager:
         """
         移除指定session的AI会话对象
 
+        移除前会触发 session logger 的最终持久化。
+
         Args:
             session_id: Session标识符
 
@@ -372,6 +374,10 @@ class HistoryManager:
             是否成功移除
         """
         if session_id in self._ai_sessions:
+            session = self._ai_sessions[session_id]
+            # 触发 session logger 最终持久化
+            if hasattr(session, "_session_logger") and session._session_logger is not None:
+                session._session_logger.close()
             del self._ai_sessions[session_id]
             return True
         return False

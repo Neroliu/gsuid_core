@@ -157,7 +157,7 @@ async def sync_knowledge():
                 text_to_embed = build_image_text(knowledge)
 
             # 生成向量
-            vector = list(embedding_model.embed([text_to_embed]))[0]
+            vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
             # 构建payload
             payload: dict = dict(knowledge)
@@ -213,7 +213,7 @@ async def query_knowledge(
         return []
 
     # 生成查询向量
-    query_vector = list(embedding_model.embed([query]))[0]
+    query_vector = list(await embedding_model.aembed([query]))[0]
 
     # 构建过滤条件
     search_filter = None
@@ -281,7 +281,7 @@ async def sync_manual_knowledge():
 
         # 生成向量
         text_to_embed = build_knowledge_text(knowledge)
-        vector = list(embedding_model.embed([text_to_embed]))[0]
+        vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
         # 构建payload
         payload: dict = dict(knowledge)
@@ -321,7 +321,7 @@ async def add_manual_knowledge_to_db(knowledge: dict) -> bool:
 
     # 生成向量
     text_to_embed = build_knowledge_text(KnowledgeBase(**knowledge))
-    vector = list(embedding_model.embed([text_to_embed]))[0]
+    vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
     # 构建payload
     payload: dict = dict(knowledge)
@@ -379,7 +379,7 @@ async def update_manual_knowledge_in_db(entity_id: str, updates: dict) -> bool:
 
     # 重新生成向量
     text_to_embed = build_knowledge_text(KnowledgeBase(**updated))
-    vector = list(embedding_model.embed([text_to_embed]))[0]
+    vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
     point = PointStruct(
         id=point_id,
@@ -546,7 +546,7 @@ async def search_manual_knowledge(
         return []
 
     # 生成查询向量
-    query_vector = list(embedding_model.embed([query]))[0]
+    query_vector = list(await embedding_model.aembed([query]))[0]
 
     # 构建过滤条件
     search_filter = None

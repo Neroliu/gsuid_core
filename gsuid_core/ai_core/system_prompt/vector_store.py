@@ -104,7 +104,7 @@ async def sync_to_vector_store(prompts: List[dict]) -> None:
 
         # 生成向量
         text_to_embed = build_prompt_text(prompt)
-        vector = list(embedding_model.embed([text_to_embed]))[0]
+        vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
         # 构建payload
         payload: dict = dict(prompt)
@@ -148,7 +148,7 @@ async def search_by_vector(
         return []
 
     # 生成查询向量
-    query_vector = list(embedding_model.embed([query]))[0]
+    query_vector = list(await embedding_model.aembed([query]))[0]
 
     # 执行搜索（不做tags预过滤，因为数组字段过滤较复杂）
     search_result = await client.query_points(
@@ -225,7 +225,7 @@ async def update_in_vector_store(prompt: dict) -> bool:
 
         # 生成新的向量
         text_to_embed = build_prompt_text(prompt)
-        vector = list(embedding_model.embed([text_to_embed]))[0]
+        vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
         # 构建payload
         payload: dict = dict(prompt)

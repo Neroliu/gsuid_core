@@ -301,11 +301,21 @@ class _EmbeddingModelWrapper:
         self._provider = provider
 
     def embed(self, texts: list[str]):
-        """兼容 fastembed TextEmbedding.embed() 接口
+        """兼容 fastembed TextEmbedding.embed() 接口（同步，可能阻塞事件循环）
 
         返回一个生成器，每个元素是 list[float]（而非 numpy array）。
+        警告：在异步环境中应使用 aembed() 以避免阻塞事件循环。
         """
         results = self._provider.embed_sync(texts)
+        return iter(results)
+
+    async def aembed(self, texts: list[str]):
+        """异步批量嵌入（不阻塞事件循环）
+
+        返回一个生成器，每个元素是 list[float]。
+        在异步代码中应优先使用此方法代替 embed()。
+        """
+        results = await self._provider.embed(texts)
         return iter(results)
 
     @property

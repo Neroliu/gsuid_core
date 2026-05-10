@@ -179,7 +179,7 @@ async def sync_images():
                 _hash=current_hash,
             )
             text_to_embed = build_image_text(image_entity)
-            vector = list(embedding_model.embed([text_to_embed]))[0]
+            vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
             # 构建payload
             payload: dict = dict(image)
@@ -234,7 +234,7 @@ async def search_images(
         return []
 
     # 生成查询向量
-    query_vector = list(embedding_model.embed([query]))[0]
+    query_vector = list(await embedding_model.aembed([query]))[0]
 
     # 构建过滤条件
     search_filter = None
@@ -484,7 +484,7 @@ async def add_manual_image_to_db(image: dict) -> bool:
 
     # 生成向量
     text_to_embed = build_image_text(image_entity)
-    vector = list(embedding_model.embed([text_to_embed]))[0]
+    vector = list(await embedding_model.aembed([text_to_embed]))[0]
 
     # 构建payload
     payload: dict = dict(image)

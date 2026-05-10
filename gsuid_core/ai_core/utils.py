@@ -19,6 +19,11 @@ def extract_json_from_text(raw_text: str) -> dict:
     if not raw_text or not raw_text.strip():
         raise ValueError("Empty input text for JSON extraction")
 
+    # 过滤已知的非 JSON 特殊标记（如模型输出的 <SILENCE>）
+    stripped = raw_text.strip()
+    if stripped in ("<SILENCE>", "[SILENCE]", "SILENCE"):
+        raise ValueError(f"Special marker '{stripped}' is not valid JSON")
+
     cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", raw_text).strip()
     cleaned = repair_json(cleaned)
     try:

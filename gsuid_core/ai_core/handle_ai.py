@@ -19,7 +19,7 @@ from datetime import datetime
 # 导入表情包模块以注册 on_core_start 钩子和 @ai_tools
 import gsuid_core.ai_core.meme.startup  # noqa: F401
 import gsuid_core.ai_core.buildin_tools.meme_tools  # noqa: F401
-from gsuid_core.bot import Bot
+from gsuid_core.bot import Bot, _Bot
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.ai_core.utils import send_chat_result, prepare_content_payload
@@ -297,13 +297,30 @@ async def handle_ai_chat(bot: Bot, event: Event):
             # ============================================================
             if session.persona_name:
                 mood_key = str(event.group_id) if event.group_id else str(event.user_id)
-                asyncio.create_task(
+                mood_task = asyncio.create_task(
                     _update_persona_mood(
                         persona_name=session.persona_name,
                         group_id=mood_key,
                         user_message=query,
                     )
                 )
+                # 安全获取底层 _Bot 实例，兼容 Bot 和 MockBot
+                # 注意：先判断 Bot（更具体的子类），再判断 _Bot（更宽泛的父类），
+                # 防止 Bot 继承 _Bot 时 _Bot 分支先匹配导致 underlying 为 Bot 实例
+                underlying: _Bot | None = None
+                if isinstance(bot, Bot):
+                    underlying = bot.bot
+                elif isinstance(bot, _Bot):
+                    underlying = bot
+                elif hasattr(bot, "_real_bot") and isinstance(bot._real_bot, Bot):
+                    underlying = bot._real_bot.bot
+
+                if underlying is not None:
+                    underlying._add_bg_task(mood_task)
+                else:
+                    logger.warning(
+                        "🧠 [GsCore][AI] 无法获取 _Bot 实例，mood_task 未被注册到 bg_tasks，可能导致 Task 游离"
+                    )
 
         except Exception as e:
             logger.exception(f"🧠 [GsCore][AI] 聊天异常: {e}")

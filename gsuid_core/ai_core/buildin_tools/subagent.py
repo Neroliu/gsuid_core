@@ -65,12 +65,16 @@ async def create_subagent(
         如果skill列表也没有合适的工具**才考虑**调用web_search工具去实际搜索。
     """
 
+    import hashlib
+
+    task_hash = hashlib.md5(task.encode()).hexdigest()[:8]
     agent = create_agent(
         system_prompt=system_prompt,
         max_tokens=max_tokens,
         max_iterations=max_iterations,
         create_by="AutoPlanner",
         task_level="high",
+        session_id=f"subagent_{task_hash}",
     )
 
     try:
