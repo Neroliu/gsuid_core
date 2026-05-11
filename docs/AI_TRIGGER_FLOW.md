@@ -854,6 +854,74 @@ def _check_persona_changed(session: GsCoreAIAgent, persona_name: str) -> bool:
 - `GsCoreAIAgent` 新增 `persona_name` 属性用于追踪
 - `create_agent()` 工厂函数支持 `persona_name` 参数
 
+#### 5.6.3 强制总结偏离用户问题 (设计缺陷) ✅ 已修复
+
+**问题所在**: 当 Agent 达到 `UsageLimitExceeded`（思考轮数上限）时，系统的 fallback 处理逻辑无法让 AI 真正回答用户最初的问题，而是让 AI "自我总结思考过程"。
+
+**症状**: 用户问"今天北京天气怎么样"，AI 搜索了多轮工具后超限，然后回复"根据我前面的搜索，我调用了天气查询工具，获取了相关数据，现在总结如下..."——用户听到的是 AI 的工作汇报，而非天气答案。
+
+**根本原因**（三重缺陷叠加）：
+
+| 缺陷 | 说明 | 后果 |
+|------|------|------|
+| A：无问题锚定 | fallback prompt 不包含用户原始问题 | LLM 在多轮工具调用后遗忘原始意图 |
+| B：工具 schema 残留 | 传入的 `message_history` 含完整工具定义 | schema 的"模式惯性"诱导 LLM 继续输出工具调用格式 |
+| C：措辞歧义 | "总结性的最终回答"被解读为"总结思考过程" | LLM 复盘工具调用而非回答问题 |
+
+**修复方案** (`gs_agent.py`，v4 最终方案)：
+
+核心思想：**不传递杂乱历史**，而是从中提取"用户原问题 + 已知事实 + LLM 中间推理"，按轮次组织后打包为一条干净的消息，`message_history` 置空，fallback Agent 不带 `deps_type/deps`。
+
+```python
+# 1. 记录原始用户问题
+self._last_user_question = user_message.strip() if isinstance(user_message, str) else ""
+
+# 2. 按轮次提取事实+推理（保留 TextPart 中间结论）
+run_context = _extract_run_context(self.history)
+
+# 3. 打包成一条干净的消息
+if run_context:
+    final_message = (
+        f"【用户的问题】\n{user_question}\n\n"
+        f"【已获取的信息和推理过程】\n{run_context}\n\n"
+        "请根据以上已知信息，直接回答用户的问题。"
+        "禁止调用任何工具，只输出自然语言文本。"
+    )
+else:
+    final_message = (
+        f"【用户的问题】\n{user_question}\n\n"
+        "请直接回答这个问题（根据你的已有知识和角色性格），不要调用任何工具。"
+    )
+
+# 4. 创建无工具精简 Agent（去掉 deps_type/deps：tools=[] 时不需要依赖注入）
+_fallback_agent = Agent(
+    model=self.model,
+    system_prompt=self.system_prompt or "你是一个智能助手。",
+    model_settings={"max_tokens": self.max_tokens},
+    tools=[],       # 空工具列表 = 从根源上消除 schema 注入
+    toolsets=[],
+    retries=0,
+    output_type=str,
+)
+
+# message_history 为空：所有上下文已聚焦到 final_message 中
+fallback_result = await _fallback_agent.run(
+    final_message,
+    message_history=[],
+    usage_limits=UsageLimits(request_limit=1),
+)
+```
+
+**原理说明**：
+- **按轮次组织、保留推理**：`_extract_run_context()` 不仅提取 `ToolReturnPart`（工具返回），还保留 `TextPart`（LLM 中间推理）并按"第N轮 → 工具调用 → 返回"组织，LLM 能看到完整的因果链条，而非散装的返回列表
+- **message_history = []**：彻底排除了上一轮"工具调用模式"的行为惯性，LLM 以"全新会话"的姿态进入
+- **无工具 Agent**：`tools=[]` 从根源上消除 schema，LLM 没有工具可调；同时去掉 `deps_type/deps`，避免 pydantic_ai 版本中不匹配参数的隐患
+- **错误处理一致性**：`except Exception` 中，有 `bot` 时通过 `bot.send()` 发出最终错误并 `return ""`；无 `bot` 时返回字符串由调用方处理，避免"安抚消息+错误消息"双发
+
+> ⚠️ **方案演进**：v1 → 错误地用 `_strip_tool_schema_from_history()`（无效，schema 在 Agent 内部 system prompt）；v2 → 创建新 Agent 但仍传完整 `self.history`（LLM 需自行梳理）；v3 → 提取事实 + 打包消息 + message_history 置空，但丢失了 LLM 中间推理、保留了 deps_type/deps；**v4 最终：按轮次提取事实+推理、去掉冗余参数、修正错误处理**。
+
+> 详细技术报告见 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md`
+
 ### 5.5 工具注册系统与 Agent 架构
 
 #### 5.5.1 工具注册表结构
@@ -3814,6 +3882,7 @@ Session ID 格式说明:
 | D-17 | 🟡 性能 | models.py | ORM Relationship lazy='selectin'导致N+1查询问题，应改为'noload'显式加载 | ✅ 已修复 | 10.9 |
 | D-18 | 🟡 设计 | hiergraph.py | Layer-1 Speaker归类仅依赖LLM遵守指令，代码层缺乏硬性保障 | ✅ 已修复 | 10.8 |
 | D-19 | 🟡 设计 | system1.py | System-1 One-hop邻居扩展未实现，与论文Section 2.3描述不符 | ✅ 已修复 | 10.7 |
+| D-20 | 🟡 正确性 | gs_agent.py | 强制总结（UsageLimitExceeded fallback）偏离用户原始问题，AI自我总结而非直接回答 | ✅ 已修复 | 5.6.3 |
 
 ---
 
@@ -3836,3 +3905,4 @@ Session ID 格式说明:
 | 2026-04-19 | v3.1 | 全面核对 ai_core 代码与文档一致性，修正以下内容：1.1 模块结构（新增 dynamic_tool_discovery.py、dataclass_models.py、startup.py、scheduled_task/scheduler.py，移除 adapter.py、episode.py）；2.3 MAX_SUMMARY_LENGTH 4000→8000；3.1 AI 处理流程（8步：含记忆检索、send_chat_result、observe）；5.1 Session 创建（create_agent 移除 model_name、新增 create_by="Chat"，mtime 缓存，session_id 格式 bot:{bot_id}:group:{group_id}）；5.3 内存保护（DEFAULT_MAX_MESSAGES=40、MAX_AI_HISTORY_LENGTH=30、移除 MAX_HISTORY_CHARS、Agent 内部截断含 ToolCall/ToolReturn 配对保护）；5.5.2 @ai_tools 新增 check_func/**check_kwargs 参数和智能参数注入；5.5.7 buildin 工具新增 query_user_memory；5.5.10-5.5.11 动态工具发现和核心函数签名；6.4 巡检流程（_pre_check_session + _inspect_session_with_semaphore 两阶段）；6.5 决策 Prompt（mood/context_hook 替代 reason，_parse_decision_json，_strip_message_quotes）；6.7.1 INACTIVE_THRESHOLD_HOURS=1；6.7.2 _get_bot_for_session 三级查找（gss.active_bot）；7.2 模块结构（scheduler.py、startup.py）；7.4.2 独立工具函数替代 manage_scheduled_task；7.6-7.11 架构图和使用流程；8.1 统计模块结构（dataclass_models.py、startup.py）；8.3 数据库模型（BaseIDModel、AITokenUsageByType、api_529_count、memory 字段）；8.4 持久化机制（startup.py）；8.6 record_token_usage 新增 chat_type 参数；10.2 移除 episode.py；10.4 Scope Key 格式修正（ScopeType.GROUP:789012）；10.5 ObservationRecord 移除 ai_reply；10.6/10.11 batch_interval_seconds=1800、llm_semaphore_limit=2；10.9 数据库模型（SQLModel 非 BaseIDModel、AIMemHierarchicalGraphMeta 在 hiergraph.py）；10.12.3 启动初始化（无 create_all、IngestionWorker() 无参）；11.3 Heartbeat 流程图（mood/context_hook）；附录 B model_name 热重载 ✅；附录 C Session ID 格式 bot:{bot_id}:group:{group_id} |
 | 2026-04-24 | v3.2 | Memory 系统 Bug 修复与性能优化：修复 B-01（Edge 去重 key 拼接 f-string 错误，worker.py）；修复 B-02（entity 计数虚高导致频繁重建 hiergraph，models.py/entity.py/worker.py）；修复 B-03（_apply_entity_assignments 新建 Category 初始化缺失，hiergraph.py）；优化 P-01（Entity 向量去重串行改并行，models.py）；优化 P-04（Reranker 三路并行化，dual_route.py）；优化 P-03（ORM Relationship lazy='selectin' 改为 'noload'，消除 N+1 查询，models.py）；修复 M-06（Speaker 强制 Layer-1 归类硬性保障，hiergraph.py）；新增 System-1 One-hop 邻居扩展（system1.py/ops.py）；新增已知问题 D-12~D-17 |
 | 2026-05-05 | v4.0 | **MCP 重构 + Image Understand + Meme Module + Web Search 统一接口**：1.1 模块结构（新增 mcp/mcp_tool_caller.py、mcp/mcp_tools_config.py、image_understand/ 模块、meme/ 模块）；5.5.7 buildin 工具新增 web_fetch、send_trigger_images、send_meme/collect_meme/search_meme；5.5.12 MCP 工具集成全面更新（新增 register_as_ai_tools/tools 字段、MCP 工具 ID 格式、mcp_tools_config 配置、通用 call_mcp_tool 调用、MCP 预设配置、4 个新 API 端点）；8.0 MCP 配置 API 新增 tools/discover/import/presets 端点；新增 10.14 Meme 表情包模块（引用 MEME_MODULE.md）；新增 10.15 Image Understand 图片理解模块（MCP 驱动，GsCoreAIAgent._prepare_user_message 自动处理）；新增 10.16 Web Search 统一搜索接口（Tavily/Exa/MCP 三选一，MiniMax 搜索迁移至 MCP）；附录 A 新增 MCP/ImageUnderstand/Meme/WebSearch 相关文件路径 |
+| 2026-05-11 | v4.1 | **修复 D-20（强制总结偏离用户问题）v3 到 v4 演进**：v3 实现保留 `_last_user_question`、`_extract_known_facts()`、message_history 置空、无工具 Agent；v4 在 v3 基础上进一步把 `_extract_known_facts` 替换为 `_extract_run_context`（按轮次保留工具返回+LLM 中间推理），去掉 fallback Agent 冗余的 `deps_type/deps` 参数，修正错误处理避免消息双发；更新 5.6.3 节；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md` 技术报告；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT_v4.md` 最终版报告 |

@@ -20,6 +20,11 @@ from .config import memory_config
 from .startup import *  # noqa: F401, F403
 from .startup import get_ingestion_worker
 from .observer import ObservationRecord, observe, get_observation_queue
+from .database.clear_ops import (
+    clear_group_memories,
+    clear_user_global_memories,
+    clear_memories_for_scope_async,
+)
 from .retrieval.dual_route import MemoryContext, dual_route_retrieve
 
 __all__ = [
@@ -32,4 +37,7 @@ __all__ = [
     "dual_route_retrieve",
     "MemoryContext",
     "get_ingestion_worker",
+    "clear_memories_for_scope_async",
+    "clear_group_memories",
+    "clear_user_global_memories",
 ]

@@ -4,6 +4,8 @@
 并生成子Agent来完成特定任务，结果返回给主Agent。
 """
 
+import asyncio
+
 from pydantic_ai import RunContext
 
 from gsuid_core.logger import logger
@@ -14,6 +16,9 @@ from gsuid_core.ai_core.rag.tools import search_tools
 
 # 子Agent最大迭代次数上限，防止死循环
 _SUBAGENT_MAX_ITERATIONS = 3
+
+# 全局限制：同时最多 3 个 Subagent 并发运行
+_subagent_semaphore = asyncio.Semaphore(3)
 
 
 @ai_tools(category="self")
@@ -34,61 +39,64 @@ async def create_subagent(
     """
     logger.info(f"🧠 [Subagent] 启动通用规划执行Agent，任务: {task[:50]}...")
 
-    # 搜索工具
-    tools = await search_tools(
-        query=task,
-        limit=8,
-        non_category="self",
-    )
-    logger.debug(f"🧠 [Subagent] 工具列表: {[tool.name for tool in tools]}")
+    async with _subagent_semaphore:
+        # 搜索工具
+        tools = await search_tools(
+            query=task,
+            limit=8,
+            non_category="self",
+        )
+        # 子Agent不能再创建子Agent，防止递归爆炸
+        tools = [t for t in tools if t.name != "create_subagent"]
+        logger.debug(f"🧠 [Subagent] 工具列表: {[tool.name for tool in tools]}")
 
-    # ✨ 核心：内置一个极其强大的 Plan-and-Solve System Prompt
-    system_prompt = """
-    你是一个极其聪明且自主的“规划与执行专家（Plan-and-Solve Agent）”。
-    你不会一次性瞎猜答案，而是严格遵循以下工作流来解决给定的复杂任务：
+        # ✨ 内置一个 Plan-and-Solve System Prompt
+        system_prompt = """
+        你是一个极其聪明且自主的"规划与执行专家（Plan-and-Solve Agent）"。
+        你不会一次性瞎猜答案，而是严格遵循以下工作流来解决给定的复杂任务：
 
-    【工作流】
-    1. 📝 规划阶段 (Plan)：
-       - 分析任务，在你的回答中首先输出一个清晰的 `<TODO_LIST>`。
-       - 把复杂任务拆解成 2~5 个具体的、可执行的小步骤。
-    2. 🛠️ 执行阶段 (Execute)：
-       - 根据你的 TODO List，依次调用你拥有的工具去完成每一步。
-       - 每执行完一步，在心里打个勾，并根据工具返回的结果决定下一步。
-    3. 🧐 校验阶段 (Verify)：
-       - 检查你收集到的信息是否已经足够回答用户的原始任务？如果有遗漏，继续调用工具补充。
-    4. 🏁 总结阶段 (Final Output)：
-       - 任务全部完成后，整理所有获得的信息，给出一个极其高质量、详尽的最终结论或成果。
+        【工作流】
+        1. 📝 规划阶段 (Plan)：
+           - 分析任务，在你的回答中首先输出一个清晰的 `<TODO_LIST>`。
+           - 把复杂任务拆解成 2~5 个具体的、可执行的小步骤。
+        2. 🛠️ 执行阶段 (Execute)：
+           - 根据你的 TODO List，依次调用你拥有的工具去完成每一步。
+           - 每执行完一步，在心里打个勾，并根据工具返回的结果决定下一步。
+        3. 🧐 校验阶段 (Verify)：
+           - 检查你收集到的信息是否已经足够回答用户的原始任务？如果有遗漏，继续调用工具补充。
+        4. 🏁 总结阶段 (Final Output)：
+           - 任务全部完成后，整理所有获得的信息，给出一个极其高质量、详尽的最终结论或成果。
 
-    【注意】：必须确保最终输出的内容是直接针对任务的最终结果，不要只输出规划过程。
-    【注意】：**优先使用已有的专业工具(AI Tools)**
-        如果没有合适的工具则调用skill列表,
-        如果skill列表也没有合适的工具**才考虑**调用web_search工具去实际搜索。
-    """
+        【注意】：必须确保最终输出的内容是直接针对任务的最终结果，不要只输出规划过程。
+        【注意】：**优先使用已有的专业工具(AI Tools)**
+            如果没有合适的工具则调用skill列表,
+            如果skill列表也没有合适的工具**才考虑**调用web_search工具去实际搜索。
+        """
 
-    import hashlib
+        import hashlib
 
-    task_hash = hashlib.md5(task.encode()).hexdigest()[:8]
-    agent = create_agent(
-        system_prompt=system_prompt,
-        max_tokens=max_tokens,
-        max_iterations=max_iterations,
-        create_by="AutoPlanner",
-        task_level="high",
-        session_id=f"subagent_{task_hash}",
-    )
-
-    try:
-        # 直接把任务扔给它，它会被 system_prompt 逼着去先列 TODO list
-        result = await agent.run(
-            user_message=f"【当前任务】\n{task}\n\n请立即开始你的规划与执行！",
-            bot=ctx.deps.bot,
-            ev=ctx.deps.ev,
-            tools=tools,
-            return_mode="return",  # 结果返回给主Agent，由主Agent决定何时发送给用户
+        task_hash = hashlib.md5(task.encode()).hexdigest()[:8]
+        agent = create_agent(
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            max_iterations=max_iterations,
+            create_by="AutoPlanner",
+            task_level="high",
+            session_id=f"subagent_{task_hash}",
         )
 
-        return f"【子Agent规划并执行完毕，交付结果如下】\n\n{result}"
+        try:
+            # 直接把任务扔给它，它会被 system_prompt 逼着去先列 TODO list
+            result = await agent.run(
+                user_message=f"【当前任务】\n{task}\n\n请立即开始你的规划与执行！",
+                bot=ctx.deps.bot,
+                ev=ctx.deps.ev,
+                tools=tools,
+                return_mode="return",  # 结果返回给主Agent，由主Agent决定何时发送给用户
+            )
 
-    except Exception as e:
-        logger.error(f"❌[Subagent] 执行失败: {e}")
-        return f"⚠️ 复杂任务执行失败，子Agent崩溃: {str(e)}"
+            return f"【子Agent规划并执行完毕，交付结果如下】\n\n{result}"
+
+        except Exception as e:
+            logger.error(f"❌[Subagent] 执行失败: {e}")
+            return f"⚠️ 复杂任务执行失败，子Agent崩溃: {str(e)}"

@@ -856,6 +856,146 @@ DELETE /api/ai/memory/scopes/{scope_key}
 
 ---
 
+## 22.19 清空记忆（高级批量删除）
+
+```
+POST /api/ai/memory/clear
+```
+
+清空指定 Scope 下的所有记忆数据，支持精确匹配或前缀模糊匹配。
+
+### Scope Key 匹配模式
+
+| 模式 | 说明 |
+|------|------|
+| **精确匹配** | `scope_key = "group:789012"` → 仅匹配 `"group:789012"` |
+| **前缀模糊匹配** | `scope_pattern = "group:789012"` → 匹配 `"group:789012"` 以及 `"group:789012@..."` |
+
+> 前缀模糊匹配适用于 `user_in_group` 类型 scope（如 `user_in_group:12345@789012`），它的前半部分与 `group:789012` 无关，因此前缀模式只能匹配 `"group:"` 开头、可能带 `@` 后缀的 scope_key。
+
+**请求体**:
+```json
+{
+    "scope_key": "group:789012",
+    "scope_pattern": null,
+    "dry_run": false
+}
+```
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `scope_key` | string | 否 | null | 精确匹配的 Scope Key |
+| `scope_pattern` | string | 否 | null | 前缀匹配的 Scope Key |
+| `dry_run` | bool | 否 | false | 为 true 时仅统计数量，不实际删除 |
+
+> `scope_key` 和 `scope_pattern` 至少提供一个，同时提供时以 `scope_key` 为准（精确优先）。
+
+**响应**:
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "affected_scope_keys": ["group:789012"],
+        "deleted_episodes": 50,
+        "deleted_entities": 30,
+        "deleted_edges": 40,
+        "deleted_categories": 10
+    }
+}
+```
+
+---
+
+## 22.20 清空群记忆
+
+```
+DELETE /api/ai/memory/groups/{group_id}/clear?include_user_in_group=true&dry_run=false
+```
+
+清空某个群的全部记忆，包括：
+
+1. `group:{group_id}` 下的所有记忆（Episode/Entity/Edge/Category）
+2. `user_in_group:*@{group_id}` 下所有用户的群内记忆档案（当 `include_user_in_group=true` 时）
+
+同时删除数据库记录和 Qdrant 中的向量。
+
+> ⚠️ **此操作不可逆，请谨慎使用！**
+
+**路径参数**:
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `group_id` | string | 群组 ID |
+
+**Query 参数**:
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `include_user_in_group` | bool | 否 | true | 是否同时清空该群内所有用户的 user_in_group 记忆档案 |
+| `dry_run` | bool | 否 | false | 为 true 时仅统计数量，不实际删除 |
+
+**响应**:
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "group_id": "789012",
+        "affected_scope_keys": [
+            "group:789012",
+            "user_in_group:11111@789012",
+            "user_in_group:22222@789012"
+        ],
+        "deleted_episodes": 50,
+        "deleted_entities": 30,
+        "deleted_edges": 40,
+        "deleted_categories": 10
+    }
+}
+```
+
+---
+
+## 22.21 清空用户全局记忆
+
+```
+DELETE /api/ai/memory/users/{user_id}/global/clear?dry_run=false
+```
+
+清空某个用户的跨群全局记忆画像（`user_global:{user_id}` 下的所有记忆数据）。
+
+> ⚠️ **此操作不可逆，请谨慎使用！**
+
+**路径参数**:
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `user_id` | string | 用户 ID |
+
+**Query 参数**:
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `dry_run` | bool | 否 | false | 为 true 时仅统计数量，不实际删除 |
+
+**响应**:
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "affected_scope_keys": ["user_global:12345"],
+        "deleted_episodes": 20,
+        "deleted_entities": 15,
+        "deleted_edges": 10,
+        "deleted_categories": 5
+    }
+}
+```
+
+---
+
 ## API 总览
 
 | 方法 | 路径 | 说明 |
@@ -878,3 +1018,6 @@ DELETE /api/ai/memory/scopes/{scope_key}
 | PUT | `/api/ai/memory/config` | 更新记忆配置 |
 | GET | `/api/ai/memory/scopes` | Scope 列表 |
 | DELETE | `/api/ai/memory/scopes/{scope_key}` | 删除 Scope 记忆 |
+| POST | `/api/ai/memory/clear` | 清空记忆（高级批量删除） |
+| DELETE | `/api/ai/memory/groups/{group_id}/clear` | 清空群全部记忆 |
+| DELETE | `/api/ai/memory/users/{user_id}/global/clear` | 清空用户全局记忆 |

@@ -287,7 +287,7 @@ async def handle_ai_chat(bot: Bot, event: Event):
                     logger.info("🧠 [GsCore][AI] 角色选择沉默，不发送回复")
                     # 情绪仍然正常更新，只是不发消息
                 else:
-                    await send_chat_result(bot, chat_result)
+                    await send_chat_result(bot, chat_result, ev=event)
                     logger.info(f"🧠 [GsCore][AI] 回复已发送 (模式: {intent})")
 
             # ============================================================

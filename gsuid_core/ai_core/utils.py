@@ -14,6 +14,12 @@ from gsuid_core.segment import Message, MessageSegment
 from gsuid_core.utils.image.convert import convert_img
 from gsuid_core.utils.resource_manager import RM
 
+# 表情包标记正则：同时兼容全角冒号和半角冒号
+MEME_TAG_PATTERN = re.compile(
+    r"<meme[：:]\s*([^>]+?)>",
+    re.IGNORECASE,
+)
+
 
 def extract_json_from_text(raw_text: str) -> dict:
     if not raw_text or not raw_text.strip():
@@ -203,17 +209,42 @@ async def prepare_content_payload(
     return content_payload
 
 
-async def send_chat_result(bot: Bot, chat_result: str):
+async def send_chat_result(
+    bot: Bot,
+    text: str,
+    ev: Event | None = None,
+) -> None:
     """
-    解析并发送 chat_result，支持：
+    解析并发送聊天结果，支持：
     - 按换行分割多条消息
     - @用户ID 语法 → MessageSegment.at(user_id)
+    - <meme: 情绪> 标记 → 触发表情包发送（需传入 ev）
     """
-    if not chat_result:
+    if not text:
+        return
+
+    # Trace 日志：记录原始输出
+    logger.trace(f"[Meme] 原始输出: {text!r}")
+
+    # 解析表情包标记
+    meme_tags: list[str] = MEME_TAG_PATTERN.findall(text)
+    clean_text: str = MEME_TAG_PATTERN.sub("", text).strip()
+
+    # 清理标记残留的多余空格/标点
+    clean_text = re.sub(r"\s{2,}", " ", clean_text)
+    clean_text = re.sub(r"^[，。！？\s]+|[，。！？\s]+$", "", clean_text)
+
+    # Trace 日志：记录解析结果
+    logger.trace(f"[Meme] 解析标记: {meme_tags}, 清理后文本: {clean_text!r}")
+
+    if not clean_text:
+        # 没有纯文本时，如果有表情包标记且有 ev，直接发图片
+        if meme_tags and ev is not None:
+            await _send_meme_from_tag(meme_tags[0].strip(), bot, ev)
         return
 
     # 按换行分割为多条消息
-    blocks = re.split(r"\n\s*\n", chat_result.strip())
+    blocks = re.split(r"\n\s*\n", clean_text)
 
     for block in blocks:
         if not block.strip():
@@ -224,11 +255,52 @@ async def send_chat_result(bot: Bot, chat_result: str):
         # 计算纯文本长度
         plain_text = re.sub(r"@\d+", "", block)
 
-        # 模拟打字延迟（见下方的优化建议）
+        # 模拟打字延迟
         delay = min(max(len(plain_text) / 7, 0.5), 3.0)
         await asyncio.sleep(delay)
 
         await bot.send(segments)
+
+    # 发送表情包（如有）
+    if meme_tags and ev is not None:
+        await _send_meme_from_tag(meme_tags[0].strip(), bot, ev)
+
+
+async def _send_meme_from_tag(mood: str, bot: Bot, ev: Event) -> None:
+    """解析 meme 标记并发送对应表情包"""
+    from gsuid_core.ai_core.meme.config import meme_config
+
+    if not meme_config.get_config("meme_enable").data:
+        return
+
+    try:
+        from gsuid_core.ai_core.meme.library import _read_file, get_memes_base_path
+        from gsuid_core.ai_core.meme.selector import pick
+        from gsuid_core.ai_core.meme.database_model import AiMemeRecord
+        from gsuid_core.ai_core.buildin_tools.meme_tools import _get_persona_for_event
+
+        persona = _get_persona_for_event(ev)
+        record = await pick(
+            mood=mood,
+            scene="",
+            persona=persona,
+            session_id=ev.session_id,
+        )
+        if record is None:
+            return
+
+        file_path = get_memes_base_path() / record.file_path
+        if not file_path.exists():
+            logger.debug(f"[Meme] 表情包文件不存在: {file_path}")
+            return
+
+        image_data = await _read_file(file_path)
+        img_b64 = await convert_img(image_data)
+        await bot.send(MessageSegment.image(img_b64))
+        await AiMemeRecord.record_usage(record.meme_id, ev.group_id or "")
+        logger.info(f"[Meme] 标记触发表情包: {record.meme_id} (mood={mood})")
+    except Exception as e:
+        logger.debug(f"[Meme] 标记发送失败: {e}")
 
 
 def _parse_at_segments(text: str) -> list[Message]:

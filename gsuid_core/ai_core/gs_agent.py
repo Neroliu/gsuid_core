@@ -41,6 +41,48 @@ from gsuid_core.ai_core.configs.ai_config import ai_config
 _T = TypeVar("_T")
 
 
+def _extract_run_context(history: List[ModelMessage], max_fact_len: int = 2000) -> str:
+    """从历史消息中提取"已知事实"和"模型推理片段"，按轮次组织。
+
+    相比只提取 ToolReturnPart，还保留 TextPart（LLM 中间推理），
+    因为这些推理有时本身就是有价值的结论。
+    """
+    sections: list[str] = []
+    round_num = 0
+
+    for msg in history:
+        if isinstance(msg, ModelResponse):
+            round_num += 1
+            texts: list[str] = []
+            calls: list[str] = []
+            for part in msg.parts:
+                if isinstance(part, TextPart) and part.content.strip():
+                    t = part.content.strip()
+                    if len(t) > 500:
+                        t = t[:500] + "...[截断]"
+                    texts.append(t)
+                elif isinstance(part, ToolCallPart):
+                    calls.append(part.tool_name)
+
+            if texts or calls:
+                header = f"【第{round_num}轮】"
+                if calls:
+                    header += f" 调用工具: {', '.join(calls)}"
+                if texts:
+                    header += "\n" + "\n".join(texts)
+                sections.append(header)
+
+        elif isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    content = str(part.content).strip()
+                    if len(content) > max_fact_len:
+                        content = content[:max_fact_len] + f"\n...[截断, 共{len(content)}字符]"
+                    sections.append(f"  → [{part.tool_name}] 返回: {content}")
+
+    return "\n".join(sections) if sections else ""
+
+
 def _truncate_message_for_log(msg: Any, max_base64_len: int = 100) -> Any:
     """
     截断消息中的长 base64 数据，用于日志输出。
@@ -209,6 +251,7 @@ class GsCoreAIAgent:
     def extract_history(self):
         if self.max_history <= 0:
             self.history = []
+            return
 
         if len(self.history) > self.max_history:
             self.history = _truncate_history_with_tool_safety(
@@ -336,6 +379,14 @@ class GsCoreAIAgent:
 
         logger.info("🧠 [GsCoreAIAgent] ====== Agent 运行开始 ======")
         context = ToolContext(bot=bot, ev=ev)
+
+        # 记录原始用户问题，供后续强制总结使用
+        last_user_question: str = ""
+        if isinstance(user_message, str):
+            last_user_question = user_message.strip()
+        elif isinstance(user_message, Sequence):
+            # 从 Sequence[UserContent] 中提取纯文本
+            last_user_question = "\n".join(item for item in user_message if isinstance(item, str)).strip()
 
         # 处理用户消息：当传入 Sequence[UserContent] 时，自动处理其中的图片
         if isinstance(user_message, Sequence) and not isinstance(user_message, str):
@@ -465,7 +516,7 @@ class GsCoreAIAgent:
                                 if self._session_logger is not None:
                                     self._session_logger.log_text_output(_text)
                                 if bot and _text and return_mode in ["always", "by_bot"]:
-                                    await send_chat_result(bot, _text)
+                                    await send_chat_result(bot, _text, ev=ev)
 
                             elif isinstance(part, ThinkingPart):
                                 _thinking = part.content.strip()
@@ -554,35 +605,59 @@ class GsCoreAIAgent:
             if bot:
                 await bot.send("⏳ 思考链过长，正在根据已有线索为你整理最终结论...")
 
-            # ✨ 【关键点2】发起“强制总结”请求
+            # ✨ 【关键点2】发起"强制总结"请求
             try:
-                # 追加一条系统强制指令，严禁再次调用工具
-                fallback_prompt = (
-                    "（系统强制指令）：你先前的思考和工具调用已达到最大轮数限制被强制中断。"
-                    "请立即停止使用任何工具，并仅根据上述已获取的所有信息，根据用户的问题给出一个总结性的最终回答或结论。"
+                user_question = last_user_question or "用户之前提出的问题"
+
+                # 从历史中提取已获取的事实和模型推理片段
+                run_context = _extract_run_context(self.history)
+
+                if run_context:
+                    final_message = (
+                        f"【用户的问题】\n{user_question}\n\n"
+                        f"【已获取的信息和推理过程】\n{run_context}\n\n"
+                        "请根据以上已知信息，根据人设风格直接回答用户的问题。"
+                        "禁止调用任何工具，只输出自然语言文本。"
+                    )
+                else:
+                    final_message = (
+                        f"【用户的问题】\n{user_question}\n\n"
+                        "请直接回答这个问题（根据你的已有知识和角色性格），不要调用任何工具。"
+                    )
+
+                # 创建无工具精简 Agent（tools=[] = 内部无 schema，从根源消除工具调用）
+                _fallback_agent = Agent(
+                    model=self.model,
+                    system_prompt=self.system_prompt or "你是一个智能助手。",
+                    model_settings={"max_tokens": self.max_tokens},
+                    tools=[],
+                    toolsets=[],
+                    retries=0,
+                    output_type=str,
                 )
 
-                # 使用上一次崩溃前保存的上下文，再次请求大模型
-                fallback_result = await _agent.run(
-                    fallback_prompt,
-                    deps=context,
-                    message_history=self.history,
+                # message_history 为空：所有上下文已聚焦到 final_message 中
+                fallback_result = await _fallback_agent.run(
+                    final_message,
+                    message_history=[],
                     usage_limits=UsageLimits(request_limit=1),
                 )
 
-                # 获取强制总结的文本并发送
                 if bot:
-                    await send_chat_result(bot, fallback_result.output)
+                    await send_chat_result(bot, fallback_result.output, ev=ev)
                 return ""
 
             except Exception as e:
-                # 如果强制总结还报错（比如最后一次它还死活要调工具导致再次超限），再使用保底话术
                 logger.error(f"🧠 [PydanticAI] 强制总结失败: {e}")
                 if self._session_logger is not None:
                     self._session_logger.log_error("fallback_failed", str(e))
-                error_msg = "⚠️ 这个问题太复杂了，目前获取到的信息不足以给出准确答案。"
-                "可以尝试提高思维链长度，或者尝试其他方法解决问题。"
-                return error_msg
+                fallback_error = (
+                    "⚠️ 问题较复杂，现有信息不足以给出准确答案。可以尝试提高思维链长度，或换个方式描述问题。"
+                )
+                if bot:
+                    await bot.send(fallback_error)
+                    return ""
+                return fallback_error
 
         except httpx.TimeoutException as e:
             # HTTP 请求超时

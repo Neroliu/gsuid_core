@@ -322,7 +322,7 @@ class HeartbeatInspector:
 
             # 创建 Bot 实例以使用 send_chat_result（支持 @语法解析）
             bot_instance = Bot(_bot, event)
-            await send_chat_result(bot_instance, message)
+            await send_chat_result(bot_instance, message, ev=event)
 
             target_id = event.group_id or user_id
             logger.info(f"🫀 [Heartbeat] 发送成功 -> {target_id}: {message}")

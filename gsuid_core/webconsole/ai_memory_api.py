@@ -27,6 +27,11 @@ from gsuid_core.ai_core.memory.database.models import (
     mem_category_entity_members,
     mem_episode_entity_mentions,
 )
+from gsuid_core.ai_core.memory.database.clear_ops import (
+    clear_group_memories,
+    clear_user_global_memories,
+    clear_memories_for_scope_async,
+)
 from gsuid_core.ai_core.memory.ingestion.hiergraph import AIMemHierarchicalGraphMeta, rebuild_task
 
 # ─────────────────────────────────────────────
@@ -43,6 +48,18 @@ class MemorySearchRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=50, description="返回结果数量上限")
     enable_system2: bool = Field(default=True, description="是否启用 System-2 分层图遍历")
     enable_user_global: bool = Field(default=False, description="是否联合查询用户跨群画像")
+
+
+class MemoryClearRequest(BaseModel):
+    """清空记忆请求"""
+
+    scope_key: Optional[str] = Field(None, max_length=128, description="精确匹配的 Scope Key，如 group:789012")
+    scope_pattern: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="前缀匹配的 Scope Key，如 group:789012 会匹配 group:789012 及 group:789012@...",
+    )
+    dry_run: bool = Field(default=False, description="是否仅统计数量而不实际删除")
 
 
 class MemoryConfigUpdateRequest(BaseModel):
@@ -1540,3 +1557,96 @@ async def delete_scope_memory(
             "msg": f"删除 Scope 记忆失败: {str(e)}",
             "data": None,
         }
+
+
+# ─────────────────────────────────────────────
+# 10. 清空记忆 API（高级批量删除）
+# ─────────────────────────────────────────────
+
+
+@app.post("/api/ai/memory/clear")
+async def clear_memory(
+    req: MemoryClearRequest,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    清空指定 Scope 下的所有记忆数据（支持精确匹配或前缀模糊匹配）
+
+    支持通过 scope_key 精确匹配，或 scope_pattern 前缀模糊匹配。
+    当 scope_pattern 以 @ 结尾时，会自动使用模糊匹配来匹配 user_in_group 的 scope_key。
+
+    Args:
+        req: 清空请求参数
+
+    Returns:
+        status: 0成功，1失败
+        data: 删除的记录数量统计
+    """
+    result = await clear_memories_for_scope_async(
+        scope_key=req.scope_key,
+        scope_pattern=req.scope_pattern,
+        dry_run=req.dry_run,
+    )
+    return result
+
+
+@app.delete("/api/ai/memory/groups/{group_id}/clear")
+async def clear_group_memory(
+    group_id: str,
+    include_user_in_group: bool = True,
+    dry_run: bool = False,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    清空某个群的全部记忆
+
+    会删除以下内容：
+    1. group:{group_id} 下的所有记忆（Episode/Entity/Edge/Category）
+    2. 如果 include_user_in_group=True（默认），还会删除 user_in_group:*@{group_id} 下所有用户的群内记忆档案
+
+    同时删除数据库记录和 Qdrant 中的向量。
+
+    > ⚠️ 此操作不可逆，请谨慎使用！
+
+    Args:
+        group_id: 群组 ID
+        include_user_in_group: 是否同时清空该群内所有用户的 user_in_group 记忆档案
+        dry_run: 为 True 时仅统计数量，不执行删除
+
+    Returns:
+        status: 0成功，1失败
+        data: 删除的记录数量统计
+    """
+    result = await clear_group_memories(
+        group_id=group_id,
+        include_user_in_group=include_user_in_group,
+        dry_run=dry_run,
+    )
+    return result
+
+
+@app.delete("/api/ai/memory/users/{user_id}/global/clear")
+async def clear_user_global_memory(
+    user_id: str,
+    dry_run: bool = False,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    清空某个用户的跨群全局记忆画像
+
+    删除 user_global:{user_id} 下的所有记忆数据。
+    此操作不可逆，请谨慎使用。
+
+    Args:
+        user_id: 用户 ID
+        dry_run: 为 True 时仅统计数量，不执行删除
+
+    Returns:
+        status: 0成功，1失败
+        data: 删除的记录数量统计
+    """
+    result = await clear_user_global_memories(
+        user_id=user_id,
+        dry_run=dry_run,
+    )
+    return result
