@@ -79,7 +79,7 @@ def get_openai_config_by_name(config_name: str) -> tuple[str, str, str]:
         oconfig.get_config("api_key").data[0],
         oconfig.get_config("model_name").data,
     )
-    logger.info(f"🧠 [GsCore] 加载 OpenAI 配置: Name: {model_name}, URL: {base_url}, Key: {api_key}")
+    logger.info(f"🧠 [GsCore] 加载 OpenAI 配置: Name: {model_name}, URL: {base_url}, Key: ...{api_key[-4:]}")
     return base_url, api_key, model_name
 
 
@@ -90,7 +90,7 @@ def get_anthropic_config_by_name(config_name: str) -> tuple[str, str, str]:
         aconfig.get_config("api_key").data[0],
         aconfig.get_config("model_name").data,
     )
-    logger.info(f"🧠 [GsCore] 加载 Anthropic 配置: Name: {model_name}, URL: {base_url}, Key: {api_key}")
+    logger.info(f"🧠 [GsCore] 加载 Anthropic 配置: Name: {model_name}, URL: {base_url}, Key: ...{api_key[-4:]}")
     return base_url, api_key, model_name
 
 
@@ -118,7 +118,7 @@ def get_anthropic_chat_model_by_name(config_name: str) -> "AnthropicModel":
     """
     base_url, api_key, model_name = get_anthropic_config_by_name(config_name)
 
-    logger.info(f"🧠 [GsCore] 加载 Anthropic 模型: Name: {model_name}, URL: {base_url}, Key: {api_key}")
+    logger.info(f"🧠 [GsCore] 加载 Anthropic 模型: Name: {model_name}, URL: {base_url}, Key: ...{api_key[-4:]}")
 
     return AnthropicModel(
         model_name=model_name,
