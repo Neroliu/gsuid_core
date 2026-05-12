@@ -14,9 +14,10 @@ from gsuid_core.segment import Message, MessageSegment
 from gsuid_core.utils.image.convert import convert_img
 from gsuid_core.utils.resource_manager import RM
 
-# 表情包标记正则：同时兼容全角冒号和半角冒号
+# 表情包标记正则：兼容全角/半角冒号，以及前后任意数量的反引号包裹
+# 例如：<meme: 困>  `<meme：困>`  ``<meme: 开心>``
 MEME_TAG_PATTERN = re.compile(
-    r"<meme[：:]\s*([^>]+?)>",
+    r"`*<meme[：:]\s*([^>]+?)>`*",
     re.IGNORECASE,
 )
 
@@ -218,7 +219,7 @@ async def send_chat_result(
     解析并发送聊天结果，支持：
     - 按换行分割多条消息
     - @用户ID 语法 → MessageSegment.at(user_id)
-    - <meme: 情绪> 标记 → 触发表情包发送（需传入 ev）
+    - <meme: 情绪> 标记（可带反引号）→ 触发表情包发送（需传入 ev）
     """
     if not text:
         return

@@ -28,6 +28,7 @@ except ImportError:
 from gsuid_core.bot import _Bot
 from gsuid_core.config import core_config, plugin_config_store
 from gsuid_core.logger import logger
+from gsuid_core.gs_logger import GsLogger
 from gsuid_core.utils.plugins_config.gs_config import core_plugins_config
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -413,10 +414,40 @@ class GsServer:
     async def connect(self, websocket: WebSocket, bot_id: str) -> _Bot:
         await websocket.accept()
         self.active_ws[bot_id] = websocket
-        bot = _Bot(bot_id, websocket)
-        bot.start_send_worker()  # 启动独立的发送 worker，串行化 WebSocket 写入
-        self.active_bot[bot_id] = bot
-        logger.info(f"{bot_id}已连接！")
+
+        if bot_id in self.active_bot:
+            bot = self.active_bot[bot_id]
+            disconnected_at: Optional[float] = getattr(bot, "_disconnected_at", None)
+            # 若断连超过 5 分钟或 _disconnected_at 异常为 None，丢弃旧实例避免内存泄漏
+            if disconnected_at is None or time.time() - disconnected_at > 300:
+                logger.warning(f"{bot_id} 断连超过 5 分钟，丢弃旧 Bot 重新创建")
+                # 先 cancel 旧 send_task，防止孤儿 Task 持续运行
+                if bot._send_task and not bot._send_task.done():
+                    bot._send_task.cancel()
+                    try:
+                        await bot._send_task
+                    except asyncio.CancelledError:
+                        pass
+                bot.clear_send_queue()  # 丢弃旧实例前清空队列，避免消息泄漏
+                bot = _Bot(bot_id, websocket)
+                bot.start_send_worker()
+                self.active_bot[bot_id] = bot
+                logger.info(f"{bot_id} 首次连接（旧实例已超时丢弃）")
+            else:
+                # 重连：复用旧 Bot 实例，只替换 WebSocket
+                # _do_send 闭包已改为动态读取 self.bot，无需清空队列
+                bot.bot = websocket
+                bot.logger = GsLogger(bot_id, websocket)
+                bot._disconnected_at = None
+                bot.start_send_worker()
+                logger.info(f"{bot_id} 重连，复用旧 Bot 实例，队列中剩余消息将继续发送")
+        else:
+            # 首次连接：新建 Bot
+            bot = _Bot(bot_id, websocket)
+            bot.start_send_worker()  # 启动独立的发送 worker，串行化 WebSocket 写入
+            self.active_bot[bot_id] = bot
+            logger.info(f"{bot_id} 首次连接")
+
         try:
             # fix: 正确处理同步和异步回调，并等待 gather
             tasks = []
@@ -443,7 +474,12 @@ class GsServer:
         修复要点：
         1. 取消 _send_task，防止孤儿协程持续占用内存
         2. 清理 Bot.instances / mutiply_instances / mutiply_map 中属于该 bot_id 的条目
+        3. 保留 Bot 实例在 active_bot 中，以便重连时复用（避免消息丢失）
         """
+        if bot_id not in self.active_ws and bot_id not in self.active_bot:
+            # 已经断开过了，幂等返回
+            return
+
         from gsuid_core.bot import Bot
 
         if bot_id in self.active_ws:
@@ -463,6 +499,9 @@ class GsServer:
                     await bot._send_task
                 except asyncio.CancelledError:
                     pass
+            bot._send_task = None
+            bot.bot = None  # 标记 ws 已断开，send_worker 重启前不会发送
+            bot._disconnected_at = time.time()
 
             # 2. 取消所有后台任务并等待其真正结束
             tasks_to_cancel = [t for t in bot.bg_tasks if not t.done()]
@@ -495,9 +534,9 @@ class GsServer:
                     f"但 mutiply_map 中未找到对应映射，map 可能泄漏"
                 )
 
-            del self.active_bot[bot_id]
+            # 不再删除 active_bot[bot_id]，保留实例等待重连
 
-        logger.warning(f"{bot_id}已中断！")
+        logger.warning(f"{bot_id} 已断开，Bot 实例保留等待重连")
 
     async def send(self, message: str, bot_id: str):
         if bot_id in self.active_ws:

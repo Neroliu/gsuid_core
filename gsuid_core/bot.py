@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Union, Literal, Optional
 
 from fastapi import WebSocket
 from msgspec import json as msgjson
+from starlette.websockets import WebSocketState
 
 from gsuid_core.logger import logger
 from gsuid_core.models import Event, Message, MessageSend, TaskContext
@@ -111,6 +112,8 @@ class _Bot:
         # 独立发送队列：所有 WebSocket 发送操作通过此队列串行化执行
         self._send_queue: asyncio.queues.Queue = asyncio.queues.Queue()
         self._send_task: Optional[asyncio.Task] = None
+        # 记录断连时间，用于重连时判断是否复用旧实例（避免内存泄漏）
+        self._disconnected_at: Optional[float] = None
 
     def _add_bg_task(self, task: asyncio.Task) -> None:
         """将后台任务加入 bg_tasks，并注册完成时自动移除的回调。
@@ -128,16 +131,25 @@ class _Bot:
         """独立的发送 worker，从发送队列中取出消息并串行发送。
 
         保证同一 Bot 的消息按序发送，避免多个任务同时竞争 WebSocket 发送权限。
+        断连时消息放回队列等待重连，不丢失。
         """
         while True:
             try:
                 # 从队列中取出发送任务（协程）
                 coro = await asyncio.wait_for(self._send_queue.get(), timeout=1.0)
                 try:
-                    await coro
+                    # 发送前检查 WebSocket 是否仍处于 CONNECTED 状态
+                    if self.bot is not None and self.bot.application_state == WebSocketState.CONNECTED:
+                        await coro
+                        self._send_queue.task_done()
+                    else:
+                        # ws 断了，先 task_done 抵消本次 get，再 put 重新入队
+                        logger.warning("[_Bot] ws 未连接，消息暂存等待重连...")
+                        self._send_queue.task_done()
+                        await self._send_queue.put(coro)
+                        await asyncio.sleep(2.0)
                 except Exception as e:
                     logger.exception(f"[_Bot] 发送任务异常: {e}")
-                finally:
                     self._send_queue.task_done()
             except asyncio.TimeoutError:
                 continue
@@ -145,6 +157,19 @@ class _Bot:
                 break
             except Exception as e:
                 logger.exception(f"[_Bot] 发送 worker 异常: {e}")
+
+    def clear_send_queue(self) -> None:
+        """清空发送队列中所有待发送的任务。
+
+        在 WebSocket 断连或重连前调用，防止旧连接积压的协程
+        被新连接的 worker 取出执行（闭包中捕获的是旧 ws 对象）。
+        """
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+                self._send_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
     def start_send_worker(self):
         """启动独立的发送 worker。
@@ -364,19 +389,23 @@ class _Bot:
             # ============================================
 
             logger.info(f"[发送消息to] {bot_id} - {target_type} - {target_id}")
-            if self.bot:
-                body = msgjson.encode(send)
-                # 通过发送队列串行化 WebSocket 发送，避免多任务并发写入
-                ws = self.bot  # 捕获非 None 引用，避免闭包中 self.bot 可能为 None 的类型问题
+            body = msgjson.encode(send)
+            # 通过发送队列串行化 WebSocket 发送，避免多任务并发写入
+            # 闭包不捕获 ws，执行时动态读取 self.bot，重连后自动使用新 ws
 
-                async def _do_send(ws: WebSocket = ws, body: bytes = body):
-                    await ws.send_bytes(body)
+            async def _do_send(body: bytes = body):
+                if self.bot is not None:
+                    await self.bot.send_bytes(body)
+                else:
+                    logger.warning("[_Bot] ws 未连接，消息丢弃")
 
-                await self._enqueue_send(_do_send())
-            else:
+            if task_event:
+                # HTTP 模式：仍走 send_dict
                 self.send_dict[task_id] = send
-                if task_event:
-                    task_event.set()
+                task_event.set()
+            else:
+                # WS 模式：无论连没连都入队，worker 会等重连
+                await self._enqueue_send(_do_send())
 
     async def wait_task(
         self,
