@@ -986,9 +986,9 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 │  └─────────────────────────────────────────────────────┘   │
 │                                                           │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │ by_trigger + common 工具 (按需向量检索)               │   │
+│  │ buildin + by_trigger + common 工具 (按需向量检索)     │   │
 │  │ - 插件触发器通过 to_ai 自动注册的 AI 工具             │   │
-│  │ - send_trigger_images (发送拦截到的图片)              │   │
+│  │ - send_message_by_ai (发送拦截到的图片, self)         │   │
 │  │ - 定时任务管理 (add/list/query/modify/cancel...)    │   │
 │  │ - 获取自身Persona信息                                │   │
 │  │ - 通过 search_tools() 向量检索按需加载               │   │
@@ -1047,7 +1047,7 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 | `web_search` | Web搜索（支持 Tavily / Exa / MCP 三种提供方，通过 `websearch_provider` 配置切换） |
 | `web_fetch` | 网页抓取（转 Markdown） |
 | `query_user_memory` | 查询用户记忆条数 |
-| `send_trigger_images` | 发送触发器拦截到的图片（通过资源 ID） |
+| `send_message_by_ai` | 发送消息/图片给用户（通过资源 ID 发送触发器拦截到的图片） |
 | `send_meme` | 发送表情包（根据情绪/场景智能选取） |
 | `collect_meme` | 手动收集表情包 |
 | `search_meme` | 搜索表情包库 |
@@ -1078,7 +1078,6 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 |------|------|
 | `<触发器函数名>` | 插件通过 `@sv.on_command(..., to_ai="...")` 自动注册的工具 |
 
-> **注意**：`send_trigger_images` 已移至 `buildin` 分类（始终加载），不再属于 `by_trigger`。
 
 **工作原理**：
 
@@ -1094,7 +1093,7 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
    - **`send_option(reply, buttons)`**: reply 走 `send()` 拦截，buttons 忽略
    - **`receive_resp(reply, ...)`**: reply 走 `send()` 拦截，返回 `None`（AI 不支持交互式等待）
 5. 触发器函数内可通过 `ai_return()` 向 AI 返回纯文本中间结果
-6. AI 拿到工具返回值（纯文本摘要 + 资源 ID），决定是否调用 `send_trigger_images(resource_id)` 将图片发送给用户
+6. AI 拿到工具返回值（纯文本摘要 + 资源 ID），决定是否调用 `send_message_by_ai(image_id=...)` 将图片发送给用户
 
 **交互流程**：
 
@@ -1112,17 +1111,17 @@ AI 调用（权限通过，AI 决定发图）：
   AI → 调用触发器工具(text="证券ETF")
     → 权限检查通过
     → MockBot 拦截 send(im) → RM.register(im) → 资源 ID: img_a1b2c3d4
-    → 工具返回 "查询完成\n[已生成 1 张图片，资源ID: img_a1b2c3d4。请调用 send_trigger_images 工具传入资源ID将图片发送给用户]"
-  AI → 调用 send_trigger_images(resource_id="img_a1b2c3d4") → RM.get() → real_bot.send() → 图片发出 ✅
+    → 工具返回 "查询完成\n[已生成 1 张图片，资源ID: img_a1b2c3d4。请调用 send_message_by_ai 工具传入 image_id 将图片发送给用户]"
+  AI → 调用 send_message_by_ai(image_id="img_a1b2c3d4") → RM.get() → real_bot.send() → 图片发出 ✅
 
 AI 调用（权限通过，AI 决定不发图）：
   AI → 调用触发器工具(text="证券ETF")
     → 工具返回含资源 ID
-  AI → 判断用户只要数据 → 不调用 send_trigger_images → 图片保留在 RM 中 ✅
+  AI → 判断用户只要数据 → 不调用 send_message_by_ai → 图片保留在 RM 中 ✅
 
 用户后续请求图片：
   用户 → "我想看看图"
-  AI → 从历史对话中找到资源 ID → 调用 send_trigger_images(resource_id="img_a1b2c3d4") → 图片发出 ✅
+  AI → 从历史对话中找到资源 ID → 调用 send_message_by_ai(image_id="img_a1b2c3d4") → 图片发出 ✅
 ```
 
 #### 5.5.10 子Agent工具 (`category="default"`)
@@ -3904,5 +3903,5 @@ Session ID 格式说明:
 | 2026-04-18 | v3.0 | 新增第10节 Memory 记忆系统：基于 Mnemis 双路检索的多群组/多用户 Agent 记忆系统，包含 Observer 观察者管道、Ingestion 摄入引擎（两阶段 Entity 去重 + Edge 冲突检测）、Dual-Route Retrieval 双路检索（System-1 向量相似度 + System-2 分层图遍历 + Reranker 重排序）、Hierarchical Graph 分层语义图、Scope Key 隔离体系、SQLAlchemy 图结构模型 + Qdrant 向量索引；更新 1.1 节目录结构（新增 memory/ 模块）；更新 9 节统计系统（新增 7 项记忆统计指标）；更新附录 A（新增记忆系统相关文件路径）；更新完整流程图章节编号（8→11） |
 | 2026-04-19 | v3.1 | 全面核对 ai_core 代码与文档一致性，修正以下内容：1.1 模块结构（新增 dynamic_tool_discovery.py、dataclass_models.py、startup.py、scheduled_task/scheduler.py，移除 adapter.py、episode.py）；2.3 MAX_SUMMARY_LENGTH 4000→8000；3.1 AI 处理流程（8步：含记忆检索、send_chat_result、observe）；5.1 Session 创建（create_agent 移除 model_name、新增 create_by="Chat"，mtime 缓存，session_id 格式 bot:{bot_id}:group:{group_id}）；5.3 内存保护（DEFAULT_MAX_MESSAGES=40、MAX_AI_HISTORY_LENGTH=30、移除 MAX_HISTORY_CHARS、Agent 内部截断含 ToolCall/ToolReturn 配对保护）；5.5.2 @ai_tools 新增 check_func/**check_kwargs 参数和智能参数注入；5.5.7 buildin 工具新增 query_user_memory；5.5.10-5.5.11 动态工具发现和核心函数签名；6.4 巡检流程（_pre_check_session + _inspect_session_with_semaphore 两阶段）；6.5 决策 Prompt（mood/context_hook 替代 reason，_parse_decision_json，_strip_message_quotes）；6.7.1 INACTIVE_THRESHOLD_HOURS=1；6.7.2 _get_bot_for_session 三级查找（gss.active_bot）；7.2 模块结构（scheduler.py、startup.py）；7.4.2 独立工具函数替代 manage_scheduled_task；7.6-7.11 架构图和使用流程；8.1 统计模块结构（dataclass_models.py、startup.py）；8.3 数据库模型（BaseIDModel、AITokenUsageByType、api_529_count、memory 字段）；8.4 持久化机制（startup.py）；8.6 record_token_usage 新增 chat_type 参数；10.2 移除 episode.py；10.4 Scope Key 格式修正（ScopeType.GROUP:789012）；10.5 ObservationRecord 移除 ai_reply；10.6/10.11 batch_interval_seconds=1800、llm_semaphore_limit=2；10.9 数据库模型（SQLModel 非 BaseIDModel、AIMemHierarchicalGraphMeta 在 hiergraph.py）；10.12.3 启动初始化（无 create_all、IngestionWorker() 无参）；11.3 Heartbeat 流程图（mood/context_hook）；附录 B model_name 热重载 ✅；附录 C Session ID 格式 bot:{bot_id}:group:{group_id} |
 | 2026-04-24 | v3.2 | Memory 系统 Bug 修复与性能优化：修复 B-01（Edge 去重 key 拼接 f-string 错误，worker.py）；修复 B-02（entity 计数虚高导致频繁重建 hiergraph，models.py/entity.py/worker.py）；修复 B-03（_apply_entity_assignments 新建 Category 初始化缺失，hiergraph.py）；优化 P-01（Entity 向量去重串行改并行，models.py）；优化 P-04（Reranker 三路并行化，dual_route.py）；优化 P-03（ORM Relationship lazy='selectin' 改为 'noload'，消除 N+1 查询，models.py）；修复 M-06（Speaker 强制 Layer-1 归类硬性保障，hiergraph.py）；新增 System-1 One-hop 邻居扩展（system1.py/ops.py）；新增已知问题 D-12~D-17 |
-| 2026-05-05 | v4.0 | **MCP 重构 + Image Understand + Meme Module + Web Search 统一接口**：1.1 模块结构（新增 mcp/mcp_tool_caller.py、mcp/mcp_tools_config.py、image_understand/ 模块、meme/ 模块）；5.5.7 buildin 工具新增 web_fetch、send_trigger_images、send_meme/collect_meme/search_meme；5.5.12 MCP 工具集成全面更新（新增 register_as_ai_tools/tools 字段、MCP 工具 ID 格式、mcp_tools_config 配置、通用 call_mcp_tool 调用、MCP 预设配置、4 个新 API 端点）；8.0 MCP 配置 API 新增 tools/discover/import/presets 端点；新增 10.14 Meme 表情包模块（引用 MEME_MODULE.md）；新增 10.15 Image Understand 图片理解模块（MCP 驱动，GsCoreAIAgent._prepare_user_message 自动处理）；新增 10.16 Web Search 统一搜索接口（Tavily/Exa/MCP 三选一，MiniMax 搜索迁移至 MCP）；附录 A 新增 MCP/ImageUnderstand/Meme/WebSearch 相关文件路径 |
+| 2026-05-05 | v4.0 | **MCP 重构 + Image Understand + Meme Module + Web Search 统一接口**：1.1 模块结构（新增 mcp/mcp_tool_caller.py、mcp/mcp_tools_config.py、image_understand/ 模块、meme/ 模块）；5.5.7 buildin 工具新增 web_fetch、send_meme/collect_meme/search_meme；5.5.12 MCP 工具集成全面更新（新增 register_as_ai_tools/tools 字段、MCP 工具 ID 格式、mcp_tools_config 配置、通用 call_mcp_tool 调用、MCP 预设配置、4 个新 API 端点）；8.0 MCP 配置 API 新增 tools/discover/import/presets 端点；新增 10.14 Meme 表情包模块（引用 MEME_MODULE.md）；新增 10.15 Image Understand 图片理解模块（MCP 驱动，GsCoreAIAgent._prepare_user_message 自动处理）；新增 10.16 Web Search 统一搜索接口（Tavily/Exa/MCP 三选一，MiniMax 搜索迁移至 MCP）；附录 A 新增 MCP/ImageUnderstand/Meme/WebSearch 相关文件路径 |
 | 2026-05-11 | v4.1 | **修复 D-20（强制总结偏离用户问题）v3 到 v4 演进**：v3 实现保留 `_last_user_question`、`_extract_known_facts()`、message_history 置空、无工具 Agent；v4 在 v3 基础上进一步把 `_extract_known_facts` 替换为 `_extract_run_context`（按轮次保留工具返回+LLM 中间推理），去掉 fallback Agent 冗余的 `deps_type/deps` 参数，修正错误处理避免消息双发；更新 5.6.3 节；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md` 技术报告；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT_v4.md` 最终版报告 |

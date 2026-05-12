@@ -23,7 +23,7 @@ from pathlib import Path
 from datetime import datetime
 
 from gsuid_core.logger import logger
-from gsuid_core.ai_core.resource import AI_SESSION_LOGS_PATH
+from gsuid_core.ai_core.resource import AI_SESSION_LOGS_PATH, AI_SUBAGENT_LOGS_PATH
 
 
 class AISessionLogger:
@@ -32,6 +32,13 @@ class AISessionLogger:
 
     每个 GsCoreAIAgent 实例对应一个 Logger，独立记录该会话的全生命周期。
     支持内存缓冲 + 定时持久化（10分钟）+ 销毁时最终持久化。
+
+    关联 Agent 设计（预留 agent_mesh 扩展位）：
+    - linked_agents 记录与本会话关联的其他 Agent 实例
+    - agent_type 字段用于区分关联类型：
+      * "sub_agent"   – 由本 Agent 创建的子 Agent（当前主要场景）
+      * "peer_agent"  – 同级/对等 Agent（预留，用于 agent_mesh）
+      * "parent_agent"– 父 Agent（预留，用于 agent_mesh）
     """
 
     PERSIST_INTERVAL: int = 600  # 10分钟，单位秒
@@ -42,12 +49,14 @@ class AISessionLogger:
         system_prompt: Optional[str] = None,
         persona_name: Optional[str] = None,
         create_by: str = "LLM",
+        is_subagent: bool = False,
     ):
         self.session_uuid: str = str(uuid.uuid4())[:8]
         self.session_id: str = session_id
         self.system_prompt: Optional[str] = system_prompt
         self.persona_name: Optional[str] = persona_name
         self.create_by: str = create_by
+        self.is_subagent: bool = is_subagent
 
         self.created_at: float = time.time()
         self.updated_at: float = self.created_at
@@ -57,6 +66,11 @@ class AISessionLogger:
         self._file_path: Path = self._build_file_path()
         self._persist_task: Optional[asyncio.Task] = None
         self._closed: bool = False
+
+        # 关联 Agent 列表（持久化 + 活跃状态）
+        # 每个元素: {"agent_type": str, "session_id": str, "session_uuid": str,
+        #           "persona_name": str|None, "create_by": str, "linked_at": float}
+        self.linked_agents: List[Dict[str, Any]] = []
 
         # 记录会话创建事件
         self._add_entry(
@@ -74,11 +88,16 @@ class AISessionLogger:
         self._start_persist_loop()
 
     def _build_file_path(self) -> Path:
-        """构建日志文件路径"""
+        """构建日志文件路径
+
+        SubAgent 日志独立存放于 session_logs/subagents/ 子目录，
+        与主 Agent 日志物理隔离，便于管理和查询。
+        """
         ts: str = datetime.fromtimestamp(self.created_at).strftime("%Y%m%d_%H%M%S")
         safe_session_id: str = self.session_id.replace(":", "_").replace("/", "_")
         filename: str = f"{safe_session_id}_{self.session_uuid}_{ts}.json"
-        return AI_SESSION_LOGS_PATH / filename
+        base_path: Path = AI_SUBAGENT_LOGS_PATH if self.is_subagent else AI_SESSION_LOGS_PATH
+        return base_path / filename
 
     def _add_entry(self, entry_type: str, data: Dict[str, Any]) -> None:
         """添加一条日志条目到内存缓冲"""
@@ -167,9 +186,67 @@ class AISessionLogger:
         """记录一次 run 的结束"""
         self._add_entry("run_end", {"output": str(output)})
 
+    def log_tools_list(self, tools: List[str]) -> None:
+        """记录本次传给 AI 的工具列表（去重后）"""
+        self._add_entry("tools_list", {"tools": tools})
+
     def log_node_transition(self, node_type: str, details: Optional[Dict[str, Any]] = None) -> None:
         """记录 Agent 节点状态转换（如 ModelRequestNode / CallToolsNode / End）"""
         self._add_entry("node_transition", {"node_type": node_type, "details": details or {}})
+
+    def link_agent(
+        self,
+        agent_session_id: str,
+        agent_session_uuid: str,
+        agent_type: str = "sub_agent",
+        persona_name: Optional[str] = None,
+        create_by: Optional[str] = None,
+        log_file: Optional[str] = None,
+    ) -> None:
+        """
+        记录关联的 Agent（如 SubAgent、PeerAgent 等）
+
+        Args:
+            agent_session_id: 被关联 Agent 的 session_id
+            agent_session_uuid: 被关联 Agent 的 session_uuid
+            agent_type: 关联类型，默认 "sub_agent"
+                        可选: "sub_agent", "peer_agent", "parent_agent"
+            persona_name: 被关联 Agent 的 persona_name
+            create_by: 被关联 Agent 的 create_by
+            log_file: 被关联 Agent 的日志文件路径（绝对路径或相对路径）
+        """
+        if self._closed:
+            return
+
+        link_record = {
+            "agent_type": agent_type,
+            "session_id": agent_session_id,
+            "session_uuid": agent_session_uuid,
+            "persona_name": persona_name,
+            "create_by": create_by,
+            "log_file": log_file,
+            "linked_at": time.time(),
+        }
+        self.linked_agents.append(link_record)
+        self._add_entry("agent_linked", link_record)
+        self.updated_at = time.time()
+        logger.debug(
+            f"📝 [AISessionLogger] 关联 Agent: {agent_type} session_id={agent_session_id}, uuid={agent_session_uuid}"
+        )
+
+    def get_linked_agents(self, agent_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        获取关联的 Agent 列表
+
+        Args:
+            agent_type: 可选的关联类型过滤，None 则返回全部
+
+        Returns:
+            关联 Agent 记录列表
+        """
+        if agent_type is None:
+            return list(self.linked_agents)
+        return [a for a in self.linked_agents if a.get("agent_type") == agent_type]
 
     def _start_persist_loop(self) -> None:
         """在后台启动定时持久化任务"""
@@ -207,11 +284,14 @@ class AISessionLogger:
             "session_uuid": self.session_uuid,
             "persona_name": self.persona_name,
             "create_by": self.create_by,
+            "is_subagent": self.is_subagent,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "ended_at": self.ended_at,
             "entry_count": len(self.entries),
             "entries": self.entries,
+            "linked_agents": self.linked_agents,
+            "linked_agent_count": len(self.linked_agents),
         }
 
     def close(self) -> None:

@@ -129,6 +129,12 @@ from gsuid_core.ai_core.buildin_tools.agent_mesh_tools import (
 # 命令执行工具 - 执行系统命令
 from gsuid_core.ai_core.buildin_tools.command_executor import execute_shell_command
 
+# HTML渲染工具 - 将HTML/Markdown渲染为图片
+from gsuid_core.ai_core.buildin_tools.html_render_tools import (
+    render_html_to_image,
+    render_markdown_to_image,
+)
+
 # 好感度管理工具 - 管理用户好感度
 from gsuid_core.ai_core.buildin_tools.favorability_manager import (
     set_user_favorability,
@@ -195,4 +201,7 @@ __all__ = [
     "send_agent_task_tool",
     "list_agents_tool",
     "stop_agent_tool",
+    # HTML渲染工具
+    "render_html_to_image",
+    "render_markdown_to_image",
 ]

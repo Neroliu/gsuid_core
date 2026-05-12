@@ -2706,6 +2706,22 @@ html5 = ["html5lib"]
 htmlsoup = ["BeautifulSoup4"]
 
 [[package]]
+name = "markdown"
+version = "3.10.2"
+description = "Python implementation of John Gruber's Markdown."
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "markdown-3.10.2-py3-none-any.whl", hash = "sha256:e91464b71ae3ee7afd3017d9f358ef0baf158fd9a298db92f1d4761133824c36"},
+    {file = "markdown-3.10.2.tar.gz", hash = "sha256:994d51325d25ad8aa7ce4ebaec003febcce822c3f8c911e3b17c52f7f589f950"},
+]
+
+[package.extras]
+docs = ["mdx_gh_links (>=0.2)", "mkdocs (>=1.6)", "mkdocs-gen-files", "mkdocs-literate-nav", "mkdocs-nature (>=0.6)", "mkdocs-section-index", "mkdocstrings[python] (>=0.28.3)"]
+testing = ["coverage", "pyyaml"]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 description = "Python port of markdown-it. Markdown parsing, done right!"
@@ -3392,6 +3408,7 @@ files = [
     {file = "onnxruntime-1.26.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:11a8df4dcfe9ad5ff0bd71a7571dbed019fabc7594676c89fe8b86ea029c246f"},
     {file = "onnxruntime-1.26.0-cp311-cp311-win_amd64.whl", hash = "sha256:e6456718125fd777c673f3b78d4a9ab58d6adea641e9afae85ee6444f0e0e9a9"},
     {file = "onnxruntime-1.26.0-cp311-cp311-win_arm64.whl", hash = "sha256:cd920e45b730e4a87833e2910d8ca375aaca9da6ccc09e24bce463b3356d637f"},
+    {file = "onnxruntime-1.26.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:05b028781b322ad74b57ce5b50aa5280bb1fe96ceec334628ade681e0b24c1ac"},
     {file = "onnxruntime-1.26.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:91f2bb870a4b9224eba0a6728c1fa7a9e552b8e59e1083c51fbbc3d013f2b5c0"},
     {file = "onnxruntime-1.26.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9b6dd70599005bd1bf29779f04a91978b92b5e719c11a20068a8f8e535f725b6"},
     {file = "onnxruntime-1.26.0-cp312-cp312-win_amd64.whl", hash = "sha256:a26374dc7fbcaae593601086b242120e13f2310558df0991da6dd8b8fac00414"},
@@ -4501,6 +4518,48 @@ files = [
 windows-terminal = ["colorama (>=0.4.6)"]
 
 [[package]]
+name = "pyhtmlrender"
+version = "0.1.2"
+description = "Lightweight HTML rendering library based on litehtml"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "pyhtmlrender-0.1.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:14a2dc4c1d986aff2d248d7bc58f032a012f8e7ea0f98af60407b74f826f06f3"},
+    {file = "pyhtmlrender-0.1.2-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:db2ce2df6b25462161c8e7eb5cd0aed671f256dd6464fa25662e802567e1a170"},
+    {file = "pyhtmlrender-0.1.2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:60c911d8c83f29d275b8c0af132b092feb63865cfb4be03807076aea453496ac"},
+    {file = "pyhtmlrender-0.1.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:f611f86cae1b2df360937816203a75a67ae265cb782f6d0b239fc6c4d2c26a2a"},
+    {file = "pyhtmlrender-0.1.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:4e12a0abdab918d66933fae82c8103b2cb4b75530714960d47122695156aab5f"},
+    {file = "pyhtmlrender-0.1.2-cp310-abi3-win_amd64.whl", hash = "sha256:928c2e974fcf7466b647784449384e2d9e34b32e4a9dcf4b5bebc3bbf718239f"},
+    {file = "pyhtmlrender-0.1.2-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:89945e7e062984370884bc10af55f5a883d69fd3ac3c1956f001c4e53c05d3e3"},
+    {file = "pyhtmlrender-0.1.2-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9b9118e04ee096e7d39350da915d2554a058a0f9ad10a5b875fa5d33bae6193e"},
+    {file = "pyhtmlrender-0.1.2-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ea4a2c3a61b19919182f893d1af2b8dc559429739b5145506ca309f67b9daa85"},
+    {file = "pyhtmlrender-0.1.2-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:b642c2dbc143fd7ea2594edf05ee3e089e2fa21e20c85b50dc62a32fd32b3d43"},
+    {file = "pyhtmlrender-0.1.2-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:838e090d20d37dd5555355e0cc1cfd66201174bd117362432271cc341399d077"},
+    {file = "pyhtmlrender-0.1.2-cp312-abi3-win_amd64.whl", hash = "sha256:fe6df36353ed7a74f9e87ce35acf16e7f07a74b0267f159717c4d57f19d504d9"},
+    {file = "pyhtmlrender-0.1.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:660541fd77ea54b0f07e9329cd181948d7c4df64ad2bd72d991462215320e5fa"},
+    {file = "pyhtmlrender-0.1.2-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:b3ab3eed5ebe1ff79b691e04440797753571c06d59e59130803953072c13a97f"},
+    {file = "pyhtmlrender-0.1.2-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:a18e31e74f57847540554cd642c8e3945d93325098a5d5b1a9cd9c07172ee4bb"},
+    {file = "pyhtmlrender-0.1.2-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:61a116c7b435de547c171125c415787dbd737855c8cac31127c2b4a933b6d72a"},
+    {file = "pyhtmlrender-0.1.2-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:0b800b6b0a257f61c75aafdaed41acd91b5121d154c9686951e72375b328e39b"},
+    {file = "pyhtmlrender-0.1.2-cp313-cp313t-win_amd64.whl", hash = "sha256:ea8c7bec35b8aab3a489cc56cc7cd9a0e02b3650c1c1fda3728f94b79d3391b0"},
+    {file = "pyhtmlrender-0.1.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:0602f17b952f9486a428a7ffc72b4c32c039395ca0d1ad16af68bf0ddeb79cf8"},
+    {file = "pyhtmlrender-0.1.2-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:ef635c17efa5f6c92dc6b47c0c28c6bf130c5de849705cedfcc53043a4967058"},
+    {file = "pyhtmlrender-0.1.2-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:7f027f8fee24028f5fe5984557f4baa5ebf28f021d81ff7996ea9b4bfe7db998"},
+    {file = "pyhtmlrender-0.1.2-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:9328ea62ba8711d9ca3a54033d9382446da1ca316c1aaad34d434253c8a22e25"},
+    {file = "pyhtmlrender-0.1.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:456150fdead55e711583647a915182a96e2ba6b6f6df00c144da1cfd4d38e55d"},
+    {file = "pyhtmlrender-0.1.2-cp314-cp314t-win_amd64.whl", hash = "sha256:8ac8a9b9540953e722f34ab19be50a62388da214ad3380af91abac6fa988c661"},
+    {file = "pyhtmlrender-0.1.2.tar.gz", hash = "sha256:05344d16a39df6e390e1cb5636f9750a8482ac574039d5e763cc68698a273045"},
+]
+
+[package.dependencies]
+aiofiles = ">=0.8.0"
+jinja2 = ">=3.0.3"
+markdown = ">=3.3.6"
+pygments = ">=2.10.0"
+pymdown-extensions = ">=9.1"
+
+[[package]]
 name = "pyjwt"
 version = "2.12.1"
 description = "JSON Web Token implementation in Python"
@@ -4520,6 +4579,25 @@ crypto = ["cryptography (>=3.4.0)"]
 dev = ["coverage[toml] (==7.10.7)", "cryptography (>=3.4.0)", "pre-commit", "pytest (>=8.4.2,<9.0.0)", "sphinx", "sphinx-rtd-theme", "zope.interface"]
 docs = ["sphinx", "sphinx-rtd-theme", "zope.interface"]
 tests = ["coverage[toml] (==7.10.7)", "pytest (>=8.4.2,<9.0.0)"]
+
+[[package]]
+name = "pymdown-extensions"
+version = "10.21.2"
+description = "Extension pack for Python Markdown."
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "pymdown_extensions-10.21.2-py3-none-any.whl", hash = "sha256:5c0fd2a2bea14eb39af8ff284f1066d898ab2187d81b889b75d46d4348c01638"},
+    {file = "pymdown_extensions-10.21.2.tar.gz", hash = "sha256:c3f55a5b8a1d0edf6699e35dcbea71d978d34ff3fa79f3d807b8a5b3fa90fbdc"},
+]
+
+[package.dependencies]
+markdown = ">=3.6"
+pyyaml = "*"
+
+[package.extras]
+extra = ["pygments (>=2.19.1)"]
 
 [[package]]
 name = "pyparsing"
@@ -6403,4 +6481,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<4.0"
-content-hash = "e971c9fc3f7c9af3eb3664b457717f3f4f6f0ac7b44b488870251d888cdfd2e2"
+content-hash = "e1532b69c3fb7bce15ec5f9a17f24696dc5f051844315cfb86a8efc46dde9ab9"

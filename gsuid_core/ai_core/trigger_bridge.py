@@ -4,7 +4,6 @@
 1. `ai_return()` — 在触发器函数内向 AI 返回纯文本中间结果
 2. `MockBot` — AI 调用时拦截 bot.send，将文本内容收集返回给 AI；图片通过 RM 注册并返回资源 ID
 3. `_register_trigger_as_ai_tool()` — 将触发器函数包装为 AI 工具并注册到 _TOOL_REGISTRY
-4. `send_trigger_images` — 配套工具（buildin 分类，始终加载），AI 通过资源 ID 发送图片给用户
 """
 
 import re
@@ -300,6 +299,9 @@ def _register_trigger_as_ai_tool(
 
         try:
             await func(mock_bot, fake_ev)
+        except Exception as e:
+            logger.exception(f"🧠 [Trigger→AI] 触发器 [{primary_keyword}] 执行异常: {e}")
+            return f"❌ 执行命令 [{primary_keyword}] 时发生错误: {e}。请尝试其他方式或检查输入参数。"
         finally:
             _AI_CALL_CONTEXT.reset(token)
 
@@ -313,7 +315,7 @@ def _register_trigger_as_ai_tool(
             id_list = ", ".join(call_ctx["image_ids"])
             parts.append(
                 f"[已生成 {image_count} 张图片，资源ID: {id_list}。"
-                f"请调用 send_trigger_images 工具传入资源ID将图片发送给用户，"
+                f"请调用 send_message_by_ai 工具传入 image_id 将图片发送给用户，"
                 f"或根据用户意图决定是否发送。]"
             )
 
@@ -383,72 +385,3 @@ def _register_trigger_as_ai_tool(
         "plugin_name": plugin_name,
         "primary_keyword": primary_keyword,
     }
-
-
-# ─── send_trigger_images 工具 ─────────────────────────────────────────────────
-
-
-async def _send_trigger_images(ctx: RunContext[ToolContext], resource_id: str) -> str:
-    """
-    通过资源ID将图片发送给用户。
-
-    当触发器工具返回值中包含资源ID时，AI 可调用此工具来发送图片。
-    资源ID格式为 "img_xxxxxxxx"，由触发器工具自动生成。
-
-    Args:
-        resource_id: 图片资源ID，例如 "img_a1b2c3d4"
-    """
-    real_bot = ctx.deps.bot
-    assert real_bot is not None, "发送图片时 bot 不能为 None"
-
-    try:
-        img_data = await RM.get(resource_id)
-    except ValueError:
-        return f"❌ 找不到资源ID: {resource_id}，可能已过期或ID不正确。"
-
-    await real_bot.send(img_data)
-    return f"✅ 已发送图片 (资源ID: {resource_id}) 给用户。"
-
-
-# 手动设置元数据
-_send_trigger_images.__name__ = "send_trigger_images"
-_send_trigger_images.__qualname__ = "send_trigger_images"
-_send_trigger_images.__module__ = __name__
-_send_trigger_images.__doc__ = (
-    "通过资源ID将图片发送给用户。"
-    "当触发器工具返回值中包含资源ID（如 img_xxxxxxxx）时，"
-    "调用此工具传入资源ID来发送图片。"
-    "如果 AI 判断图片不适合发送，可以不调用此工具。"
-)
-_send_trigger_images.__annotations__ = {
-    "ctx": RunContext[ToolContext],
-    "resource_id": str,
-    "return": str,
-}
-_send_trigger_images.__signature__ = inspect.Signature(
-    parameters=[
-        inspect.Parameter(
-            "ctx",
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=RunContext[ToolContext],
-        ),
-        inspect.Parameter(
-            "resource_id",
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=str,
-        ),
-    ],
-    return_annotation=str,
-)
-
-# 注册 send_trigger_images 工具到 buildin 分类（始终加载）
-_tool_obj = Tool(_send_trigger_images, takes_ctx=True)
-_tool_base = ToolBase(
-    name="send_trigger_images",
-    description=_send_trigger_images.__doc__ or "",
-    plugin="core",
-    tool=_tool_obj,
-)
-if "buildin" not in _TOOL_REGISTRY:
-    _TOOL_REGISTRY["buildin"] = {}
-_TOOL_REGISTRY["buildin"]["send_trigger_images"] = _tool_base

@@ -21,7 +21,8 @@ async def web_search_tool(
     """
     Web搜索工具
 
-    根据配置使用 Tavily 或 Exa API 进行 web 搜索，返回搜索结果列表。
+    根据配置使用Tavily等供应商进行网络搜索，当需要查询任何即时信息时, 如天气、股票、游戏、公告等，调用此工具。
+    返回搜索结果列表。
 
     Args:
         ctx: 工具执行上下文

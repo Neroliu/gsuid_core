@@ -117,7 +117,13 @@ async def change_ev_image_to_bytes(img: None) -> None: ...
 async def change_ev_image_to_bytes(img: Image.Image) -> bytes: ...
 
 
-async def change_ev_image_to_bytes(img: Union[str, List[str], None, Image.Image]) -> Union[None, bytes, List[bytes]]:
+async def change_ev_image_to_bytes(
+    img: Union[str, List[str], None, Image.Image],
+) -> Union[
+    None,
+    bytes,
+    List[bytes],
+]:
     if isinstance(img, str):
         img_list = [img]
     elif isinstance(img, Image.Image):

@@ -108,7 +108,7 @@ return "运势结果已生成"
 - `bot.send("base64://...")` / `bot.send("https://...")` → 以这些前缀开头的字符串被识别为图片，通过 `RM.register()` 注册
 - `bot.send(str)` 纯文字 → 文字被收集，作为工具返回值传回给 AI
 - `bot.send([text_msg, image_msg])` 混合列表 → **只要包含图片段，整个列表归为图片**，文字部分不返回给 AI
-- AI 收到工具返回值（含资源 ID）后，决定是否调用 `send_trigger_images(resource_id)` 发出图片
+- AI 收到工具返回值（含资源 ID）后，决定是否调用 `send_message_by_ai(image_id=...)` 发出图片
 - 资源 ID 在 RM 中持久存储，AI 可在后续轮次中再次发送
 - 用户直接触发时，`bot` 是真实 `Bot`，`bot.send` 立即发送，行为不变
 

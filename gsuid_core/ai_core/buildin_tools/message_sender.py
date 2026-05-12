@@ -4,7 +4,7 @@
 提供主动向用户发送消息的能力，支持文本消息和图片消息。
 """
 
-from typing import TYPE_CHECKING, List, Literal, Optional, cast
+from typing import TYPE_CHECKING, List, Optional, cast
 
 from pydantic_ai import RunContext
 
@@ -14,6 +14,7 @@ from gsuid_core.models import Message
 from gsuid_core.segment import MessageSegment
 from gsuid_core.ai_core.models import ToolContext
 from gsuid_core.ai_core.register import ai_tools
+from gsuid_core.utils.resource_manager import RM
 
 if TYPE_CHECKING:
     pass
@@ -22,32 +23,30 @@ if TYPE_CHECKING:
 @ai_tools(category="self")
 async def send_message_by_ai(
     ctx: RunContext[ToolContext],
-    message_type: Literal["text", "image"],
-    text: Optional[str] = None,
-    image_id: Optional[str] = None,
+    text: str = "",
+    image_id: str = "",
     user_id: Optional[str] = None,
 ) -> str:
     """
-    AI主动发送消息给用户
+    主动发送消息给用户
 
-    支持发送文本消息和图片消息给指定用户或当前对话用户。
-    根据message_type参数决定发送的消息类型。
+    支持发送文本消息、图片消息，或两者同时发送。
+    AI 可以任意传入 text 和/或 image_id，系统会按顺序发送。
 
     Args:
         ctx: 工具执行上下文（包含bot和ev对象）
-        message_type: 消息类型，"text"表示文本消息，"image"表示图片消息
-        text: 文本内容，当message_type为"text"时必填
-        image_id: 图片资源ID，当message_type为"image"时必填，格式通常为"res_xxxxxx"
+        text: 文本内容，可选
+        image_id: 图片资源ID，可选，格式通常为"res_xxxxxx"或"img_xxxxx"
         user_id: 可选，目标用户ID，默认为事件关联的用户
 
     Returns:
         发送结果描述字符串
 
     Example:
-        >>> await send_message_by_ai(ctx, message_type="text", text="你好！这是一条主动消息。")
-        >>> await send_message_by_ai(ctx, message_type="text", text="提醒你...", user_id="123456")
-        >>> await send_message_by_ai(ctx, message_type="image", image_id="res_abc123")
-        >>> await send_message_by_ai(ctx, message_type="image", image_id="res_abc123", text="这是你要的图片！")
+        >>> await send_message_by_ai(ctx, text="你好！这是一条主动消息。")
+        >>> await send_message_by_ai(ctx, text="提醒你...", user_id="123456")
+        >>> await send_message_by_ai(ctx, image_id="res_abc123")
+        >>> await send_message_by_ai(ctx, text="这是你要的图片！", image_id="res_abc123")
     """
     tool_ctx: ToolContext = ctx.deps
     bot: Optional[Bot] = tool_ctx.bot
@@ -56,29 +55,45 @@ async def send_message_by_ai(
         logger.warning("🧠 [BuildinTools] send_message_by_ai: Bot对象为空，无法发送消息")
         return "发送失败：Bot对象不可用"
 
+    if not text and not image_id:
+        return "发送失败：text 和 image_id 至少提供一个"
+
     target_id = user_id or getattr(tool_ctx.ev, "user_id", None) or getattr(tool_ctx.ev, "散列id", None)
 
     try:
-        if message_type == "text":
-            if not text:
-                return "发送失败：缺少文本内容"
-            await bot.send(text)
-            logger.info(f"🧠 [BuildinTools] 发送文本消息给用户 {target_id}")
-            return f"消息已发送给用户 {target_id}"
-
-        elif message_type == "image":
-            if not image_id:
-                return "发送失败：缺少图片资源ID"
-            if text:
-                message: List[Message] = [MessageSegment.text(text), MessageSegment.image(image_id)]
+        parts: List[Message] = []
+        if text:
+            parts.append(MessageSegment.text(text))
+        if image_id:
+            # 资源ID（如 img_xxxxxxxx）需要通过 RM 获取实际图片数据
+            if image_id.startswith("http") or image_id.startswith("base64://"):
+                parts.append(MessageSegment.image(image_id))
             else:
-                message = [MessageSegment.image(image_id)]  # type: ignore
-            await bot.send(cast(Message, message))
-            logger.info(f"🧠 [BuildinTools] 发送图片消息给用户 {target_id}, 图片ID: {image_id}")
-            return f"图片消息已发送给用户 {target_id}"
+                try:
+                    logger.debug(f"🧠 [BuildinTools] 调用 RM.get('{image_id}')")
+                    img_data = await RM.get(image_id)
+                    logger.debug(f"🧠 [BuildinTools] RM.get 成功, img_data type={type(img_data)}")
+                    parts.append(MessageSegment.image(img_data))
+                except ValueError as e:
+                    logger.warning(f"🧠 [BuildinTools] RM.get({image_id}) 抛出 ValueError: {e}")
+                    # 区分"资源不存在"和"资源转换失败"
+                    if "找不到资源" in str(e):
+                        return f"❌ 找不到资源ID: {image_id}，可能已过期或ID不正确。"
+                    else:
+                        return f"❌ 资源ID: {image_id} 数据转换失败: {e}"
 
+        if len(parts) == 1:
+            await bot.send(parts[0])
         else:
-            return f"发送失败：无效的消息类型 {message_type}，仅支持 'text' 或 'image'"
+            await bot.send(cast(Message, parts))
+
+        content_desc = []
+        if text:
+            content_desc.append("文本")
+        if image_id:
+            content_desc.append(f"图片({image_id})")
+        logger.info(f"🧠 [BuildinTools] 发送 {'+'.join(content_desc)} 给用户 {target_id}")
+        return f"消息已发送给用户 {target_id}"
 
     except Exception as e:
         logger.exception(f"🧠 [BuildinTools] send_message_by_ai 发送消息失败: {e}")

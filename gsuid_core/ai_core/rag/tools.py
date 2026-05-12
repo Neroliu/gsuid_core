@@ -181,9 +181,9 @@ async def get_main_agent_tools(query: str = "") -> ToolList:
             search_query = query if query else "buildin tool utility common function"
             buildin_tools_search = await search_tools(
                 query=search_query,
-                limit=3,
+                limit=4,
                 category="buildin",
-                threshold=0.3,
+                threshold=0.1,
             )
             logger.debug(
                 f"🧠 [Tools] buildin 分类通过阈值筛选加载 {len(buildin_tools_search)} 个工具 (query: {search_query})"

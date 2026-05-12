@@ -8,7 +8,7 @@ AI Session Logs APIs
 
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, TypedDict, cast
 from pathlib import Path
 from datetime import datetime
 
@@ -17,9 +17,75 @@ from pydantic import Field, BaseModel
 
 from gsuid_core.logger import logger
 from gsuid_core.ai_core.history import get_history_manager
-from gsuid_core.ai_core.resource import AI_SESSION_LOGS_PATH
+from gsuid_core.ai_core.resource import AI_SESSION_LOGS_PATH, AI_SUBAGENT_LOGS_PATH
 from gsuid_core.webconsole.app_app import app
 from gsuid_core.webconsole.web_api import require_auth
+
+# ─────────────────────────────────────────────
+# TypedDict 定义
+# ─────────────────────────────────────────────
+
+
+class SessionLogEntry(TypedDict):
+    """单条日志条目"""
+
+    type: str
+    timestamp: float
+    data: Dict[str, Any]  # type-specific payload: user_input, tool_call, tools_list, etc.
+
+
+class LinkedAgentRecord(TypedDict):
+    """关联 Agent 的基本信息（在 link_agent 时写入）"""
+
+    agent_type: str
+    session_id: str
+    session_uuid: str
+    persona_name: Optional[str]
+    create_by: Optional[str]
+    log_file: Optional[str]
+    linked_at: float
+
+
+class LinkedAgentEnriched(LinkedAgentRecord, total=False):
+    """Enriched 后的关联 Agent 条目"""
+
+    entry_count: int
+    type_counts: Dict[str, int]
+    is_active: bool
+    created_at: float
+    ended_at: Optional[float]
+    source: Literal["memory", "disk", "unavailable"]
+
+
+class SessionLogSummary(TypedDict):
+    """Session 日志摘要"""
+
+    session_id: str
+    session_uuid: Optional[str]
+    persona_name: Optional[str]
+    create_by: Optional[str]
+    is_subagent: bool
+    created_at: float
+    created_at_str: Optional[str]
+    updated_at: float
+    updated_at_str: Optional[str]
+    ended_at: Optional[float]
+    ended_at_str: Optional[str]
+    duration_seconds: Optional[float]
+    entry_count: int
+    type_counts: Dict[str, int]
+    is_active: bool
+    source: str
+    file_name: Optional[str]
+    linked_agents: List[LinkedAgentEnriched]
+    linked_agent_count: int
+
+
+class SessionLogDetail(SessionLogSummary, total=False):
+    """Session 日志详情（含完整 entries）"""
+
+    entries: List[SessionLogEntry]
+
 
 # ─────────────────────────────────────────────
 # Pydantic 请求模型
@@ -44,7 +110,7 @@ class SessionLogsFilterRequest(BaseModel):
 # ─────────────────────────────────────────────
 
 
-def _build_summary_from_memory(sid: str, session: Any) -> Dict[str, Any]:
+def _build_summary_from_memory(sid: str, session: Any) -> SessionLogSummary:
     """从内存中的活跃 Session 构建日志摘要"""
     logger_obj: Optional[Any] = getattr(session, "_session_logger", None)
 
@@ -55,8 +121,10 @@ def _build_summary_from_memory(sid: str, session: Any) -> Dict[str, Any]:
         session_uuid: Optional[str] = getattr(logger_obj, "session_uuid", None)
         persona_name: Optional[str] = getattr(logger_obj, "persona_name", None)
         create_by: Optional[str] = getattr(logger_obj, "create_by", None)
+        is_subagent: bool = getattr(logger_obj, "is_subagent", False)
         ended_at: Optional[float] = getattr(logger_obj, "ended_at", None)
         file_name: Optional[str] = str(getattr(logger_obj, "_file_path", Path("")).name) or None
+        linked_agents: List[Dict[str, Any]] = getattr(logger_obj, "linked_agents", [])
     else:
         entries = []
         created_at = 0
@@ -64,8 +132,10 @@ def _build_summary_from_memory(sid: str, session: Any) -> Dict[str, Any]:
         session_uuid = None
         persona_name = None
         create_by = None
+        is_subagent = False
         ended_at = None
         file_name = None
+        linked_agents = []
 
     # 计算运行时长
     duration: Optional[float] = None
@@ -85,6 +155,7 @@ def _build_summary_from_memory(sid: str, session: Any) -> Dict[str, Any]:
         "session_uuid": session_uuid,
         "persona_name": persona_name,
         "create_by": create_by,
+        "is_subagent": is_subagent,
         "created_at": created_at,
         "created_at_str": datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S") if created_at else None,
         "updated_at": updated_at,
@@ -97,10 +168,106 @@ def _build_summary_from_memory(sid: str, session: Any) -> Dict[str, Any]:
         "is_active": ended_at is None,
         "source": "memory",
         "file_name": file_name,
+        "linked_agents": _enrich_linked_agents_list(linked_agents),
+        "linked_agent_count": len(linked_agents),
     }
 
 
-def _parse_log_file(path: Path) -> Optional[Dict[str, Any]]:
+def _enrich_linked_agent(agent_record: Dict[str, Any]) -> LinkedAgentEnriched:
+    """
+    为 linked_agent 条目补充聚合统计信息（type_counts, entry_count, is_active 等）。
+
+    优先从内存（HistoryManager）读取，若不存在则从磁盘文件读取。
+    若关联的 agent 日志不可读，返回原始记录（仅含基本信息）。
+    """
+    enriched = dict(agent_record)  # 复制，避免修改原始数据
+
+    agent_session_id: Optional[str] = agent_record.get("session_id")
+    if not agent_session_id:
+        return cast(LinkedAgentEnriched, enriched)
+
+    # 1. 优先从内存查找
+    history_manager = get_history_manager()
+    session = history_manager.get_ai_session(agent_session_id)
+    if session is not None:
+        logger_obj = getattr(session, "_session_logger", None)
+        if logger_obj is not None:
+            entries: List[Dict[str, Any]] = getattr(logger_obj, "entries", [])
+            type_counts: Dict[str, int] = {}
+            for entry in entries:
+                etype = entry.get("type", "unknown")
+                type_counts[etype] = type_counts.get(etype, 0) + 1
+            enriched["entry_count"] = len(entries)
+            enriched["type_counts"] = type_counts
+            enriched["is_active"] = getattr(logger_obj, "ended_at", None) is None
+            enriched["created_at"] = getattr(logger_obj, "created_at", 0)
+            enriched["ended_at"] = getattr(logger_obj, "ended_at", None)
+            enriched["source"] = "memory"
+            return cast(LinkedAgentEnriched, enriched)
+
+    # 2. 从磁盘文件查找（使用 log_file 路径或 session_id + session_uuid 匹配）
+    log_file: Optional[str] = agent_record.get("log_file")
+    if log_file:
+        # 尝试直接使用 log_file 路径
+        path = Path(log_file)
+        if path.exists() and path.is_file():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data: Dict[str, Any] = json.load(f)
+                entries = data.get("entries", [])
+                type_counts = {}
+                for entry in entries:
+                    etype = entry.get("type", "unknown")
+                    type_counts[etype] = type_counts.get(etype, 0) + 1
+                enriched["entry_count"] = len(entries)
+                enriched["type_counts"] = type_counts
+                enriched["is_active"] = data.get("ended_at") is None
+                enriched["created_at"] = data.get("created_at", 0)
+                enriched["ended_at"] = data.get("ended_at", None)
+                enriched["source"] = "disk"
+                return cast(LinkedAgentEnriched, enriched)
+            except Exception:
+                pass
+
+    # 3. 回退：通过 session_id + session_uuid 在磁盘目录中搜索
+    agent_uuid: Optional[str] = agent_record.get("session_uuid")
+    if agent_uuid:
+        for p in _list_log_files():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if data.get("session_id") == agent_session_id and data.get("session_uuid") == agent_uuid:
+                    entries = data.get("entries", [])
+                    type_counts = {}
+                    for entry in entries:
+                        etype = entry.get("type", "unknown")
+                        type_counts[etype] = type_counts.get(etype, 0) + 1
+                    enriched["entry_count"] = len(entries)
+                    enriched["type_counts"] = type_counts
+                    enriched["is_active"] = data.get("ended_at") is None
+                    enriched["created_at"] = data.get("created_at", 0)
+                    enriched["ended_at"] = data.get("ended_at", None)
+                    enriched["source"] = "disk"
+                    return cast(LinkedAgentEnriched, enriched)
+            except Exception:
+                continue
+
+    # 无法获取详情，添加空占位
+    enriched.setdefault("entry_count", 0)
+    enriched.setdefault("type_counts", {})
+    enriched.setdefault("is_active", None)
+    enriched.setdefault("source", "unavailable")
+    return cast(LinkedAgentEnriched, enriched)
+
+
+def _enrich_linked_agents_list(
+    agents: List[Dict[str, Any]],
+) -> List[LinkedAgentEnriched]:
+    """对 linked_agents 列表中的每个条目进行 enrichment"""
+    return [_enrich_linked_agent(a) for a in agents]
+
+
+def _parse_log_file(path: Path) -> Optional[SessionLogSummary]:
     """解析单个日志 JSON 文件，返回摘要信息"""
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -109,6 +276,7 @@ def _parse_log_file(path: Path) -> Optional[Dict[str, Any]]:
         created_at: float = data.get("created_at", 0)
         ended_at: Optional[float] = data.get("ended_at")
         entry_count: int = data.get("entry_count", 0)
+        linked_agents: List[Dict[str, Any]] = data.get("linked_agents", [])
 
         # 计算运行时长
         duration: Optional[float] = None
@@ -123,34 +291,42 @@ def _parse_log_file(path: Path) -> Optional[Dict[str, Any]]:
             etype: str = entry.get("type", "unknown")
             type_counts[etype] = type_counts.get(etype, 0) + 1
 
-        return {
-            "session_id": data.get("session_id"),
-            "session_uuid": data.get("session_uuid"),
-            "persona_name": data.get("persona_name"),
-            "create_by": data.get("create_by"),
-            "created_at": created_at,
-            "created_at_str": datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S") if created_at else None,
-            "updated_at": data.get("updated_at"),
-            "updated_at_str": (
-                datetime.fromtimestamp(data.get("updated_at", 0)).strftime("%Y-%m-%d %H:%M:%S")
-                if data.get("updated_at")
-                else None
-            ),
-            "ended_at": ended_at,
-            "ended_at_str": datetime.fromtimestamp(ended_at).strftime("%Y-%m-%d %H:%M:%S") if ended_at else None,
-            "duration_seconds": round(duration, 2) if duration else None,
-            "entry_count": entry_count,
-            "type_counts": type_counts,
-            "is_active": ended_at is None,
-            "source": "disk",
-            "file_name": path.name,
-        }
+        return cast(
+            SessionLogSummary,
+            {
+                "session_id": data.get("session_id"),
+                "session_uuid": data.get("session_uuid"),
+                "persona_name": data.get("persona_name"),
+                "create_by": data.get("create_by"),
+                "is_subagent": data.get("is_subagent", False),
+                "created_at": created_at,
+                "created_at_str": datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S")
+                if created_at
+                else None,
+                "updated_at": data.get("updated_at"),
+                "updated_at_str": (
+                    datetime.fromtimestamp(data.get("updated_at", 0)).strftime("%Y-%m-%d %H:%M:%S")
+                    if data.get("updated_at")
+                    else None
+                ),
+                "ended_at": ended_at,
+                "ended_at_str": datetime.fromtimestamp(ended_at).strftime("%Y-%m-%d %H:%M:%S") if ended_at else None,
+                "duration_seconds": round(duration, 2) if duration else None,
+                "entry_count": entry_count,
+                "type_counts": type_counts,
+                "is_active": ended_at is None,
+                "source": "disk",
+                "file_name": path.name,
+                "linked_agents": _enrich_linked_agents_list(linked_agents),
+                "linked_agent_count": len(linked_agents),
+            },
+        )
     except Exception:
         return None
 
 
 def _load_log_detail(path: Path) -> Optional[Dict[str, Any]]:
-    """加载单个日志文件的完整内容"""
+    """加载单个日志文件的完整内容（保持 Dict[str, Any] 因为是原始 JSON）"""
     try:
         with open(path, "r", encoding="utf-8") as f:
             data: Dict[str, Any] = json.load(f)
@@ -159,23 +335,31 @@ def _load_log_detail(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _list_log_files() -> List[Path]:
-    """列出所有日志文件"""
-    if not AI_SESSION_LOGS_PATH.exists():
-        return []
+def _list_log_files(include_subagents: bool = True) -> List[Path]:
+    """列出所有日志文件
 
-    files: List[Path] = [p for p in AI_SESSION_LOGS_PATH.iterdir() if p.is_file() and p.suffix == ".json"]
+    Args:
+        include_subagents: 是否包含 SubAgent 日志（session_logs/subagents/ 子目录）
+    """
+    files: List[Path] = []
+
+    if AI_SESSION_LOGS_PATH.exists():
+        files.extend([p for p in AI_SESSION_LOGS_PATH.iterdir() if p.is_file() and p.suffix == ".json"])
+
+    if include_subagents and AI_SUBAGENT_LOGS_PATH.exists():
+        files.extend([p for p in AI_SUBAGENT_LOGS_PATH.iterdir() if p.is_file() and p.suffix == ".json"])
+
     return files
 
 
-def _build_unified_list() -> List[Dict[str, Any]]:
+def _build_unified_list() -> List[SessionLogSummary]:
     """
     构建统一的日志列表：合并内存活跃会话 + 磁盘持久化文件，按 session_uuid 去重
 
     去重规则：同一 session_uuid 在内存和磁盘中都存在时，优先使用内存版本（更新）
     """
     # 1. 收集内存中活跃 Session
-    memory_map: Dict[str, Dict[str, Any]] = {}  # session_uuid -> summary
+    memory_map: Dict[str, SessionLogSummary] = {}  # session_uuid -> summary
     memory_session_id_map: Dict[str, str] = {}  # session_id -> session_uuid (用于快速查找)
 
     history_manager = get_history_manager()
@@ -183,7 +367,7 @@ def _build_unified_list() -> List[Dict[str, Any]]:
 
     for sid, session in sessions.items():
         summary = _build_summary_from_memory(sid, session)
-        uuid_val: Optional[str] = summary.get("session_uuid")
+        uuid_val = summary.get("session_uuid")
         if uuid_val:
             memory_map[uuid_val] = summary
             memory_session_id_map[sid] = uuid_val
@@ -192,7 +376,7 @@ def _build_unified_list() -> List[Dict[str, Any]]:
             memory_map[sid] = summary
 
     # 2. 收集磁盘持久化文件
-    disk_map: Dict[str, Dict[str, Any]] = {}  # session_uuid -> summary
+    disk_map: Dict[str, SessionLogSummary] = {}  # session_uuid -> summary
     for path in _list_log_files():
         info = _parse_log_file(path)
         if info is None:
@@ -202,13 +386,13 @@ def _build_unified_list() -> List[Dict[str, Any]]:
             # 同一 uuid 可能有多份文件（异常情况），取最新的
             existing = disk_map.get(uuid_val)
             if existing is None or info.get("updated_at", 0) > existing.get("updated_at", 0):
-                disk_map[uuid_val] = info
+                disk_map[uuid_val] = info  # type: ignore
         else:
             # 没有 uuid 的兜底：用 file_name 作为 key
-            disk_map[path.name] = info
+            disk_map[path.name] = info  # type: ignore
 
     # 3. 合并去重：内存优先
-    unified: Dict[str, Dict[str, Any]] = {}
+    unified: Dict[str, SessionLogSummary] = {}
 
     # 先加入磁盘文件
     for key, info in disk_map.items():
@@ -229,16 +413,16 @@ def _build_unified_list() -> List[Dict[str, Any]]:
 
 
 def _apply_filters(
-    items: List[Dict[str, Any]],
+    items: List[SessionLogSummary],
     session_id: Optional[str] = None,
     create_by: Optional[str] = None,
     persona_name: Optional[str] = None,
     is_active: Optional[bool] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+) -> List[SessionLogSummary]:
     """对统一列表应用筛选条件"""
-    results: List[Dict[str, Any]] = []
+    results: List[SessionLogSummary] = []
 
     for item in items:
         if session_id and item.get("session_id") != session_id:
@@ -267,7 +451,7 @@ def _apply_filters(
 def _find_log_by_session_id_and_uuid(
     session_id: str,
     session_uuid: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[SessionLogDetail]:
     """
     根据 session_id + session_uuid 查找日志详情
 
@@ -285,18 +469,25 @@ def _find_log_by_session_id_and_uuid(
             mem_uuid: Optional[str] = getattr(logger_obj, "session_uuid", None)
             # 如果指定了 uuid，必须匹配；否则取内存中的
             if session_uuid is None or mem_uuid == session_uuid:
-                return {
-                    "session_id": session_id,
-                    "session_uuid": mem_uuid,
-                    "persona_name": getattr(logger_obj, "persona_name", None),
-                    "create_by": getattr(logger_obj, "create_by", None),
-                    "created_at": getattr(logger_obj, "created_at", 0),
-                    "updated_at": getattr(logger_obj, "updated_at", 0),
-                    "ended_at": getattr(logger_obj, "ended_at", None),
-                    "entry_count": len(getattr(logger_obj, "entries", [])),
-                    "entries": getattr(logger_obj, "entries", []),
-                    "source": "memory",
-                }
+                linked_agents: List[Dict[str, Any]] = getattr(logger_obj, "linked_agents", [])
+                return cast(
+                    SessionLogDetail,
+                    {
+                        "session_id": session_id,
+                        "session_uuid": mem_uuid,
+                        "persona_name": getattr(logger_obj, "persona_name", None),
+                        "create_by": getattr(logger_obj, "create_by", None),
+                        "is_subagent": getattr(logger_obj, "is_subagent", False),
+                        "created_at": getattr(logger_obj, "created_at", 0),
+                        "updated_at": getattr(logger_obj, "updated_at", 0),
+                        "ended_at": getattr(logger_obj, "ended_at", None),
+                        "entry_count": len(getattr(logger_obj, "entries", [])),
+                        "entries": getattr(logger_obj, "entries", []),
+                        "linked_agents": _enrich_linked_agents_list(linked_agents),
+                        "linked_agent_count": len(linked_agents),
+                        "source": "memory",
+                    },
+                )
 
     # 2. 从磁盘文件查找
     best_data: Optional[Dict[str, Any]] = None
@@ -317,8 +508,11 @@ def _find_log_by_session_id_and_uuid(
             best_updated_at = updated_at
             best_data = data
             best_data["source"] = "disk"  # type: ignore
+            # Enrich linked_agents with type_counts, entry_count, is_active
+            if best_data.get("linked_agents"):
+                best_data["linked_agents"] = _enrich_linked_agents_list(best_data["linked_agents"])
 
-    return best_data
+    return cast(Optional[SessionLogDetail], best_data)
 
 
 # ─────────────────────────────────────────────
@@ -467,13 +661,20 @@ async def get_session_log_by_file(
         if ".." in file_name or "/" in file_name or "\\" in file_name:
             return {"status": 1, "msg": "非法文件名", "data": None}
 
+        # 优先从主目录查找，再从 subagents 子目录查找
         path = AI_SESSION_LOGS_PATH / file_name
+        if not path.exists():
+            path = AI_SUBAGENT_LOGS_PATH / file_name
         if not path.exists():
             return {"status": 1, "msg": f"未找到日志文件: {file_name}", "data": None}
 
         data = _load_log_detail(path)
         if data is None:
             return {"status": 1, "msg": f"解析日志文件失败: {file_name}", "data": None}
+
+        # Enrich linked_agents with type_counts, entry_count, is_active
+        if data.get("linked_agents"):
+            data["linked_agents"] = _enrich_linked_agents_list(data["linked_agents"])
 
         return {"status": 0, "msg": "ok", "data": data}
     except Exception as e:
@@ -486,7 +687,114 @@ async def get_session_log_by_file(
 
 
 # ─────────────────────────────────────────────
-# 4. 日志统计 API
+# 4. 查询会话关联 Agent API（支持 agent_mesh 扩展）
+# ─────────────────────────────────────────────
+
+
+@app.get("/api/ai/session_logs/{session_id}/linked_agents")
+async def get_session_linked_agents(
+    session_id: str,
+    agent_type: Optional[str] = None,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    获取指定 Session 关联的 Agent 列表
+
+    返回与该 Session 关联的所有 Agent（SubAgent、PeerAgent、ParentAgent 等）。
+    支持按 agent_type 过滤，为前端展示 Agent 关系图提供数据。
+
+    Args:
+        session_id: Session ID（如 bot:onebot:group:123456）
+        agent_type: 可选的关联类型过滤
+                    * "sub_agent"    – 由本 Agent 创建的子 Agent
+                    * "peer_agent"   – 同级/对等 Agent（预留）
+                    * "parent_agent" – 父 Agent（预留）
+                    * None           – 返回全部关联 Agent
+
+    Returns:
+        status: 0成功，1失败
+        data: {
+            "session_id": str,
+            "session_uuid": str|None,
+            "linked_agents": [{
+                "agent_type": str,
+                "session_id": str,
+                "session_uuid": str,
+                "persona_name": str|None,
+                "create_by": str|None,
+                "linked_at": float,
+            }],
+            "total": int,
+            "by_type": {"sub_agent": int, "peer_agent": int, "parent_agent": int},
+        }
+    """
+    try:
+        history_manager = get_history_manager()
+        session = history_manager.get_ai_session(session_id)
+
+        linked_agents: List[Dict[str, Any]] = []
+        session_uuid: Optional[str] = None
+
+        # 1. 优先从内存获取
+        if session is not None:
+            logger_obj: Optional[Any] = getattr(session, "_session_logger", None)
+            if logger_obj is not None:
+                session_uuid = getattr(logger_obj, "session_uuid", None)
+                all_linked: List[Dict[str, Any]] = getattr(logger_obj, "linked_agents", [])
+                if agent_type:
+                    linked_agents = [a for a in all_linked if a.get("agent_type") == agent_type]
+                else:
+                    linked_agents = list(all_linked)
+        else:
+            # 2. 从磁盘文件查找
+            best_data: Optional[Dict[str, Any]] = None
+            best_updated_at: float = 0
+            for path in _list_log_files():
+                data = _load_log_detail(path)
+                if data is None:
+                    continue
+                if data.get("session_id") != session_id:
+                    continue
+                updated_at: float = data.get("updated_at", 0)
+                if updated_at > best_updated_at:
+                    best_updated_at = updated_at
+                    best_data = data
+            if best_data is not None:
+                session_uuid = best_data.get("session_uuid")
+                disk_linked: List[Dict[str, Any]] = best_data.get("linked_agents", [])
+                if agent_type:
+                    linked_agents = [a for a in disk_linked if a.get("agent_type") == agent_type]
+                else:
+                    linked_agents = list(disk_linked)
+
+        # 按类型统计
+        by_type: Dict[str, int] = {"sub_agent": 0, "peer_agent": 0, "parent_agent": 0}
+        for agent in linked_agents:
+            atype: str = agent.get("agent_type", "unknown")
+            by_type[atype] = by_type.get(atype, 0) + 1
+
+        return {
+            "status": 0,
+            "msg": "ok",
+            "data": {
+                "session_id": session_id,
+                "session_uuid": session_uuid,
+                "linked_agents": _enrich_linked_agents_list(linked_agents),
+                "total": len(linked_agents),
+                "by_type": by_type,
+            },
+        }
+    except Exception as e:
+        logger.error(f"📝 [SessionLogsAPI] 获取关联 Agent 失败: {e}")
+        return {
+            "status": 1,
+            "msg": f"获取关联 Agent 失败: {str(e)}",
+            "data": None,
+        }
+
+
+# ─────────────────────────────────────────────
+# 5. 日志统计 API
 # ─────────────────────────────────────────────
 
 
@@ -497,7 +805,7 @@ async def get_session_logs_overview(
     """
     获取 Session 日志统计概览
 
-    返回日志总数、今日新增、活跃 Session 数等统计信息。
+    返回日志总数、今日新增、活跃 Session 数、关联 Agent 数等统计信息。
 
     Returns:
         status: 0成功，1失败
@@ -512,6 +820,8 @@ async def get_session_logs_overview(
         memory_count: int = 0
         disk_count: int = 0
         create_by_counts: Dict[str, int] = {}
+        linked_agent_total: int = 0
+        linked_agent_by_type: Dict[str, int] = {}
 
         for item in unified:
             created_str: Optional[str] = item.get("created_at_str")
@@ -531,6 +841,12 @@ async def get_session_logs_overview(
             if cb:
                 create_by_counts[cb] = create_by_counts.get(cb, 0) + 1
 
+            # 统计关联 Agent
+            for agent in item.get("linked_agents", []):
+                linked_agent_total += 1
+                atype: str = agent.get("agent_type", "unknown")
+                linked_agent_by_type[atype] = linked_agent_by_type.get(atype, 0) + 1
+
         return {
             "status": 0,
             "msg": "ok",
@@ -541,6 +857,8 @@ async def get_session_logs_overview(
                 "memory_count": memory_count,
                 "disk_count": disk_count,
                 "create_by_distribution": create_by_counts,
+                "linked_agent_total": linked_agent_total,
+                "linked_agent_by_type": linked_agent_by_type,
                 "log_path": str(AI_SESSION_LOGS_PATH),
             },
         }

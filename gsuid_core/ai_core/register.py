@@ -12,7 +12,7 @@ from gsuid_core.ai_core.models import ToolContext
 
 from .models import ToolBase, ImageEntity, KnowledgeBase, KnowledgePoint, ManualKnowledgeBase
 
-F = TypeVar("F", bound=Callable[..., Awaitable[Union[str, Message]]])
+F = TypeVar("F", bound=Callable[..., Awaitable[Union[str, Message, bytes]]])
 
 # 定义 check_func 的类型 - 支持同步和异步函数
 CheckFunc = Callable[..., Union[Tuple[bool, str], Awaitable[Tuple[bool, str]]]]

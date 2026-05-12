@@ -57,12 +57,18 @@ class ResourceManager:
         Raises:
             ValueError: 资源 ID 不存在或已过期
         """
-        if resource_id not in self._store:
+        result = self._store.get(resource_id)
+
+        if result is None:
             raise ValueError(f"找不到资源 ID: {resource_id}")
 
-        data, _ = self._store[resource_id]
+        data, _ = result
         if isinstance(data, str):
-            data = await change_ev_image_to_bytes(data)
+            try:
+                data = await change_ev_image_to_bytes(data)
+            except ValueError as e:
+                # base64 解码失败等转换错误，包装为更明确的异常信息
+                raise ValueError(f"资源ID: {resource_id} 数据转换失败: {e}")
         return data
 
     async def start_cleanup_loop(self) -> None:

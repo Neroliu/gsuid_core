@@ -23,3 +23,5 @@ MCP_CONFIGS_PATH = get_res_path(AI_CORE_PATH / "mcp_configs")
 MISC_PATH = get_res_path(AI_CORE_PATH / "misc")
 # AI Session 日志存放路径
 AI_SESSION_LOGS_PATH = get_res_path(AI_CORE_PATH / "session_logs")
+# AI SubAgent 日志存放路径（独立子目录）
+AI_SUBAGENT_LOGS_PATH = get_res_path(AI_CORE_PATH / "session_logs" / "subagents")

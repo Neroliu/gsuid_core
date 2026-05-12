@@ -35,6 +35,7 @@ from gsuid_core.ai_core.skills import skills_toolset
 from gsuid_core.ai_core.rag.tools import ToolList, search_tools, get_main_agent_tools
 from gsuid_core.ai_core.configs.models import get_model_for_task
 from gsuid_core.ai_core.session_logger import AISessionLogger
+from gsuid_core.utils.resource_manager import RM
 from gsuid_core.ai_core.persona.prompts import CHARACTER_BUILDING_TEMPLATE
 from gsuid_core.ai_core.configs.ai_config import ai_config
 
@@ -218,6 +219,7 @@ class GsCoreAIAgent:
         create_by: str = "LLM",
         task_level: Literal["high", "low"] = "high",
         session_id: Optional[str] = None,
+        is_subagent: bool = False,
     ):
         self.history: List[ModelMessage] = []
         self.max_history = max_history
@@ -231,6 +233,7 @@ class GsCoreAIAgent:
 
         self.create_by = create_by
         self.session_id: Optional[str] = session_id
+        self.is_subagent: bool = is_subagent
 
         self.model = openai_chat_model
         if self.model is None:
@@ -244,6 +247,7 @@ class GsCoreAIAgent:
                 system_prompt=system_prompt,
                 persona_name=persona_name,
                 create_by=create_by,
+                is_subagent=is_subagent,
             )
             if system_prompt is not None:
                 self._session_logger.log_system_prompt(system_prompt)
@@ -440,6 +444,11 @@ class GsCoreAIAgent:
         logger.debug(f"🧠 [GsCoreAIAgent] 工具列表: {[tool.name for tool in tools]}")
 
         tools = list({obj.name: obj for obj in tools}.values())
+        tool_names = [t.name for t in tools]
+
+        # 记录本次传给 AI 的工具列表
+        if self._session_logger is not None:
+            self._session_logger.log_tools_list(tool_names)
 
         # 当 return_model 指定时，使用 output_type 让 pydantic_ai 强制结构化输出
         # output_type 默认为 str（返回文本），指定 Pydantic 模型时强制返回结构化 JSON
@@ -478,6 +487,19 @@ class GsCoreAIAgent:
 
                         for part in node.request.parts:
                             if isinstance(part, ToolReturnPart):
+                                # 如果工具返回b64图片或者bytes内容, 则调用RM实例上传
+                                if (
+                                    isinstance(part.content, str) and part.content.startswith("base64://")
+                                ) or isinstance(part.content, bytes):
+                                    resource_id = RM.register(part.content)
+                                    logger.info(
+                                        f"🧠 [GsCoreAIAgent] 工具 [{part.tool_name}] 返回内容，"
+                                        f"已注册资源ID [{resource_id}]"
+                                    )
+                                    part.content = (
+                                        f"[工具 {part.tool_name} 已生成内容, 但没有发送给用户，资源ID: {resource_id}]"
+                                    )
+
                                 # 返回的可能是对象也可能是字符串，这里为了打印转成 str
                                 tool_result_str = str(part.content)
                                 if len(tool_result_str) > 200:
@@ -766,6 +788,7 @@ def create_agent(
     max_history: int = 20,
     task_level: Literal["high", "low"] = "high",
     session_id: Optional[str] = None,
+    is_subagent: bool = False,
 ) -> GsCoreAIAgent:
     """
     创建 PydanticAI Agent 实例
@@ -778,6 +801,7 @@ def create_agent(
         persona_name: Persona 名称（用于热重载检测）
         task_level: 任务级别，"high"表示高级任务，"low"表示低级任务
         session_id: 会话 ID，用于关联 session 日志
+        is_subagent: 是否为 SubAgent，为 True 时日志存放于独立子目录
 
     Returns:
         PydanticAIAgent 实例
@@ -796,6 +820,7 @@ def create_agent(
         max_history=max_history,
         task_level=task_level,
         session_id=session_id,
+        is_subagent=is_subagent,
     )
 
 
