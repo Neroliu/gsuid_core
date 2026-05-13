@@ -225,6 +225,7 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
             user_id=event.user_id,
             task_name="主人用户",
             bot_id=event.bot_id,
+            WS_BOT_ID=event.WS_BOT_ID,
         ):
             await gs_subscribe.add_subscribe(
                 "single",

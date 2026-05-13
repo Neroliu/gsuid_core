@@ -7,12 +7,15 @@ HTML渲染工具模块
 
 from typing import Optional
 
-from htmlkit import (
-    md_to_pic,
-    html_to_pic,
-    text_to_pic,
-    init_fontconfig,
-)
+try:
+    from htmlkit import (
+        md_to_pic,
+        html_to_pic,
+        text_to_pic,
+        init_fontconfig,
+    )
+except ImportError as e:
+    raise ImportError(f"缺少 htmlkit 库，请先安装：pip install htmlkit, {e}")
 
 from gsuid_core.logger import logger
 

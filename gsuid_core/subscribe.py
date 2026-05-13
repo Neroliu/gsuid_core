@@ -58,6 +58,7 @@ class GsCoreSubscribe:
             "bot_id": event.bot_id,
             "task_name": task_name,
             "uid": uid,
+            "WS_BOT_ID": event.WS_BOT_ID,
         }
         if subscribe_type == "session" and event.user_type == "group":
             opt["group_id"] = event.group_id
