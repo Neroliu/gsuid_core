@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:5ebacdeda2083ac0d8ba197328729d1ca89ad159645035c264d76a20828fffec"
+content_hash = "sha256:19afc66e0b0ee319fe17aa3456828492b05f99f467296db4fb9672dfad8af17a"
 
 [[metadata.targets]]
 requires_python = "~=3.11"
@@ -1628,13 +1628,13 @@ files = [
 
 [[package]]
 name = "idna"
-version = "3.14"
+version = "3.15"
 requires_python = ">=3.8"
 summary = "Internationalized Domain Names in Applications (IDNA)"
 groups = ["default"]
 files = [
-    {file = "idna-3.14-py3-none-any.whl", hash = "sha256:e677eaf072e290f7b725f9acf0b3a2bd55f9fd6f7c70abe5f0e34823d0accf69"},
-    {file = "idna-3.14.tar.gz", hash = "sha256:466d810d7a2cc1022bea9b037c39728d51ae7dad40d480fc9b7d7ecf98ba8ee3"},
+    {file = "idna-3.15-py3-none-any.whl", hash = "sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8"},
+    {file = "idna-3.15.tar.gz", hash = "sha256:ca962446ea538f7092a95e057da437618e886f4d349216d2b1e294abfdb65fdc"},
 ]
 
 [[package]]
@@ -3310,7 +3310,7 @@ files = [
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "1.94.0"
+version = "1.95.0"
 requires_python = ">=3.10"
 summary = "Agent Framework / shim to use Pydantic with LLMs, slim package"
 groups = ["default"]
@@ -3320,18 +3320,18 @@ dependencies = [
     "griffelib>=2.0",
     "httpx>=0.27",
     "opentelemetry-api>=1.28.0",
-    "pydantic-graph==1.94.0",
+    "pydantic-graph==1.95.0",
     "pydantic>=2.12",
     "typing-inspection>=0.4.0",
 ]
 files = [
-    {file = "pydantic_ai_slim-1.94.0-py3-none-any.whl", hash = "sha256:f47cf89c61ef45a48dd575a8b32707edfec2b33ef7af80aa069bde1ce3fb6795"},
-    {file = "pydantic_ai_slim-1.94.0.tar.gz", hash = "sha256:7d7b1d6aec4d0fd31533a4ef5848863e8513ec75e82910296247a08b737aa828"},
+    {file = "pydantic_ai_slim-1.95.0-py3-none-any.whl", hash = "sha256:5ede0ab79b981a64e938143ac2a8542b493503864b2aae32f07d879e18b5adf2"},
+    {file = "pydantic_ai_slim-1.95.0.tar.gz", hash = "sha256:2057b2a6280022145a9d00d5b103bfb2a7b54be2f6bffa3fa5e8d41561c59dc1"},
 ]
 
 [[package]]
 name = "pydantic-ai-slim"
-version = "1.94.0"
+version = "1.95.0"
 extras = ["anthropic", "openai"]
 requires_python = ">=3.10"
 summary = "Agent Framework / shim to use Pydantic with LLMs, slim package"
@@ -3339,12 +3339,12 @@ groups = ["default"]
 dependencies = [
     "anthropic>=0.97.0",
     "openai>=2.29.0",
-    "pydantic-ai-slim==1.94.0",
+    "pydantic-ai-slim==1.95.0",
     "tiktoken>=0.12.0",
 ]
 files = [
-    {file = "pydantic_ai_slim-1.94.0-py3-none-any.whl", hash = "sha256:f47cf89c61ef45a48dd575a8b32707edfec2b33ef7af80aa069bde1ce3fb6795"},
-    {file = "pydantic_ai_slim-1.94.0.tar.gz", hash = "sha256:7d7b1d6aec4d0fd31533a4ef5848863e8513ec75e82910296247a08b737aa828"},
+    {file = "pydantic_ai_slim-1.95.0-py3-none-any.whl", hash = "sha256:5ede0ab79b981a64e938143ac2a8542b493503864b2aae32f07d879e18b5adf2"},
+    {file = "pydantic_ai_slim-1.95.0.tar.gz", hash = "sha256:2057b2a6280022145a9d00d5b103bfb2a7b54be2f6bffa3fa5e8d41561c59dc1"},
 ]
 
 [[package]]
@@ -3445,7 +3445,7 @@ files = [
 
 [[package]]
 name = "pydantic-graph"
-version = "1.94.0"
+version = "1.95.0"
 requires_python = ">=3.10"
 summary = "Graph and state machine library"
 groups = ["default"]
@@ -3456,8 +3456,8 @@ dependencies = [
     "typing-inspection>=0.4.0",
 ]
 files = [
-    {file = "pydantic_graph-1.94.0-py3-none-any.whl", hash = "sha256:c6e285abbc8a55d1b65162c238006913edd1ef05e63a29401a580e51f798503e"},
-    {file = "pydantic_graph-1.94.0.tar.gz", hash = "sha256:8f991c05d412c9d12d6560c1e131de48bfde12ebd27a0b196440620210f2d52c"},
+    {file = "pydantic_graph-1.95.0-py3-none-any.whl", hash = "sha256:c58dbbee18df24daf1a4ac9feceaa935c2d3489b3920fc8bb4147bc5019a8776"},
+    {file = "pydantic_graph-1.95.0.tar.gz", hash = "sha256:66ebe9f6ef49026e84a60e8ebcd708f46e6d35da35d9139dea0268d552ce6b14"},
 ]
 
 [[package]]
@@ -3519,7 +3519,7 @@ files = [
 
 [[package]]
 name = "pyhtmlrender"
-version = "0.1.2"
+version = "0.1.4"
 requires_python = ">=3.10"
 summary = "Lightweight HTML rendering library based on litehtml"
 groups = ["default"]
@@ -3531,31 +3531,31 @@ dependencies = [
     "pymdown-extensions>=9.1",
 ]
 files = [
-    {file = "pyhtmlrender-0.1.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:14a2dc4c1d986aff2d248d7bc58f032a012f8e7ea0f98af60407b74f826f06f3"},
-    {file = "pyhtmlrender-0.1.2-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:db2ce2df6b25462161c8e7eb5cd0aed671f256dd6464fa25662e802567e1a170"},
-    {file = "pyhtmlrender-0.1.2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:60c911d8c83f29d275b8c0af132b092feb63865cfb4be03807076aea453496ac"},
-    {file = "pyhtmlrender-0.1.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:f611f86cae1b2df360937816203a75a67ae265cb782f6d0b239fc6c4d2c26a2a"},
-    {file = "pyhtmlrender-0.1.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:4e12a0abdab918d66933fae82c8103b2cb4b75530714960d47122695156aab5f"},
-    {file = "pyhtmlrender-0.1.2-cp310-abi3-win_amd64.whl", hash = "sha256:928c2e974fcf7466b647784449384e2d9e34b32e4a9dcf4b5bebc3bbf718239f"},
-    {file = "pyhtmlrender-0.1.2-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:89945e7e062984370884bc10af55f5a883d69fd3ac3c1956f001c4e53c05d3e3"},
-    {file = "pyhtmlrender-0.1.2-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9b9118e04ee096e7d39350da915d2554a058a0f9ad10a5b875fa5d33bae6193e"},
-    {file = "pyhtmlrender-0.1.2-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ea4a2c3a61b19919182f893d1af2b8dc559429739b5145506ca309f67b9daa85"},
-    {file = "pyhtmlrender-0.1.2-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:b642c2dbc143fd7ea2594edf05ee3e089e2fa21e20c85b50dc62a32fd32b3d43"},
-    {file = "pyhtmlrender-0.1.2-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:838e090d20d37dd5555355e0cc1cfd66201174bd117362432271cc341399d077"},
-    {file = "pyhtmlrender-0.1.2-cp312-abi3-win_amd64.whl", hash = "sha256:fe6df36353ed7a74f9e87ce35acf16e7f07a74b0267f159717c4d57f19d504d9"},
-    {file = "pyhtmlrender-0.1.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:660541fd77ea54b0f07e9329cd181948d7c4df64ad2bd72d991462215320e5fa"},
-    {file = "pyhtmlrender-0.1.2-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:b3ab3eed5ebe1ff79b691e04440797753571c06d59e59130803953072c13a97f"},
-    {file = "pyhtmlrender-0.1.2-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:a18e31e74f57847540554cd642c8e3945d93325098a5d5b1a9cd9c07172ee4bb"},
-    {file = "pyhtmlrender-0.1.2-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:61a116c7b435de547c171125c415787dbd737855c8cac31127c2b4a933b6d72a"},
-    {file = "pyhtmlrender-0.1.2-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:0b800b6b0a257f61c75aafdaed41acd91b5121d154c9686951e72375b328e39b"},
-    {file = "pyhtmlrender-0.1.2-cp313-cp313t-win_amd64.whl", hash = "sha256:ea8c7bec35b8aab3a489cc56cc7cd9a0e02b3650c1c1fda3728f94b79d3391b0"},
-    {file = "pyhtmlrender-0.1.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:0602f17b952f9486a428a7ffc72b4c32c039395ca0d1ad16af68bf0ddeb79cf8"},
-    {file = "pyhtmlrender-0.1.2-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:ef635c17efa5f6c92dc6b47c0c28c6bf130c5de849705cedfcc53043a4967058"},
-    {file = "pyhtmlrender-0.1.2-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:7f027f8fee24028f5fe5984557f4baa5ebf28f021d81ff7996ea9b4bfe7db998"},
-    {file = "pyhtmlrender-0.1.2-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:9328ea62ba8711d9ca3a54033d9382446da1ca316c1aaad34d434253c8a22e25"},
-    {file = "pyhtmlrender-0.1.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:456150fdead55e711583647a915182a96e2ba6b6f6df00c144da1cfd4d38e55d"},
-    {file = "pyhtmlrender-0.1.2-cp314-cp314t-win_amd64.whl", hash = "sha256:8ac8a9b9540953e722f34ab19be50a62388da214ad3380af91abac6fa988c661"},
-    {file = "pyhtmlrender-0.1.2.tar.gz", hash = "sha256:05344d16a39df6e390e1cb5636f9750a8482ac574039d5e763cc68698a273045"},
+    {file = "pyhtmlrender-0.1.4-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:aa6e0bbe697326d66e93be257241409eec3f0cb3f7144d39a85acae78b0fafd0"},
+    {file = "pyhtmlrender-0.1.4-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:956f79555df06e3df6cb0b6de7ae71e496da2065cd4ed48de3b5b8270979a541"},
+    {file = "pyhtmlrender-0.1.4-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:823cc2e930f00f595516b9e675743545f0b03ed0a36f7dedae32e50c225a1dbc"},
+    {file = "pyhtmlrender-0.1.4-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:18d6f660e5dac11463cfebd9cd60642e096ba158b5c473e92ae8ac74358eb3b8"},
+    {file = "pyhtmlrender-0.1.4-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:9980110bacff83bc0a785de94f6b31f44426fad3b0f9f4217d12dc0827b03fa0"},
+    {file = "pyhtmlrender-0.1.4-cp310-abi3-win_amd64.whl", hash = "sha256:0fca00c0bc506e2d74fd6c1f0b9c069e1d00543370aa8cf50e44fbd361139fb2"},
+    {file = "pyhtmlrender-0.1.4-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:91cbf917589024d03770607dcda88011ced09859bf5295cf02316f70c3bf7687"},
+    {file = "pyhtmlrender-0.1.4-cp312-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9e7905486f526d0abfff10a6a364b1fb444aa0daacce935b0541ad334b2a6957"},
+    {file = "pyhtmlrender-0.1.4-cp312-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:244ff266b8066b1a39910a954a452c2d00ef54031202f0ac07364a4b5160fd4b"},
+    {file = "pyhtmlrender-0.1.4-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:98a26a7c432b49c6a98ce3b7c78c8cfd6f57a9372411667ff17873a61a3fc866"},
+    {file = "pyhtmlrender-0.1.4-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:7059f2069b35cb5d19cf57071ec82229201bc453043854d52fbd90f34ddf19a1"},
+    {file = "pyhtmlrender-0.1.4-cp312-abi3-win_amd64.whl", hash = "sha256:2efdd39f88739258dafe40823f5da563c04df01ad8a80f1bd84eb007d73417cd"},
+    {file = "pyhtmlrender-0.1.4-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:cb925186634ca9dd8fdccfcfdaac7e52a88adfe16d75fd450e386d1bdfd12f44"},
+    {file = "pyhtmlrender-0.1.4-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:0cdb7a1678a04d60c10a2215145df1702ba4e56057beaa6802736001bec37bf8"},
+    {file = "pyhtmlrender-0.1.4-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:bf41e2ad637f34e3f599e9860cf2108a77c4553481c2fc20e46dcf60859cae72"},
+    {file = "pyhtmlrender-0.1.4-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:f0d21c6635998ff4c4adaf293ff3d34b7a8123a8663430a012ff5dcd2cd5e32d"},
+    {file = "pyhtmlrender-0.1.4-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:f1c10a066946f870b6bd955ab49669da8851ada25d02c4349c897c061a482e4f"},
+    {file = "pyhtmlrender-0.1.4-cp313-cp313t-win_amd64.whl", hash = "sha256:0bfff02a8dffb4a395c3c34ed76a480082a17038db680a2c2f98374a2d4e34a4"},
+    {file = "pyhtmlrender-0.1.4-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:1bd943a90241c29280ff6113414e9298efcee1035db82583aa31cbf3b5aa7920"},
+    {file = "pyhtmlrender-0.1.4-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:608b68ff354c9dd74d0614cbc81067c5f607ecf198075e56241154def9f09cfc"},
+    {file = "pyhtmlrender-0.1.4-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:d6695353a37ba1f4b7d700d22bdf89dacd62a2c14c326671e61ed84a2fc239fb"},
+    {file = "pyhtmlrender-0.1.4-cp314-cp314t-musllinux_1_2_aarch64.whl", hash = "sha256:95e0b616dd3b5710de8b94a763db62a0eab12b4de5fca8f81fec69141e827043"},
+    {file = "pyhtmlrender-0.1.4-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:25f55e15030a260608603c3d93dc3850be27f02232ec2cb7cd116f9fd8cfc9e5"},
+    {file = "pyhtmlrender-0.1.4-cp314-cp314t-win_amd64.whl", hash = "sha256:9ba7ed0a627eb6baadd61eb917fc8dda444a59526ff358f7bbe9a473595b18c8"},
+    {file = "pyhtmlrender-0.1.4.tar.gz", hash = "sha256:0310768fbd8f8ff64226894cd43d53dcb66a10896bc2053ad9ef568ef14b3ab0"},
 ]
 
 [[package]]
