@@ -69,7 +69,7 @@ dependencies = [
     "fastmcp>=2.0.0",
     "markdownify>=1.2.2",
     "onnxruntime>=1.24.1",
-    "pyhtmlrender>=0.1.2",
+    "pyhtmlrender>=0.1.4",
 ]
 name = "gsuid-core"
 version = "0.10.2"
