@@ -60,6 +60,12 @@ async def execute_scheduled_task(task_id: str) -> None:
     """
     from gsuid_core.aps import scheduler
     from gsuid_core.gss import gss
+    from gsuid_core.ai_core.configs.ai_config import ai_config
+
+    # 检查AI总开关
+    if not ai_config.get_config("enable").data:
+        logger.info(f"⏰ [ScheduledTask] AI总开关已关闭，跳过执行定时任务: {task_id}")
+        return
 
     logger.info(f"⏰ [ScheduledTask] 开始执行定时任务: {task_id}")
 

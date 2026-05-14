@@ -6,6 +6,7 @@ Scheduled Task 启动模块
 
 from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start, on_core_shutdown
+from gsuid_core.ai_core.configs.ai_config import ai_config
 
 from .executor import reload_pending_tasks, cleanup_completed_tasks
 
@@ -16,7 +17,12 @@ async def init_scheduled_tasks():
     初始化定时任务调度器
 
     在系统启动时调用，重新加载所有 pending 状态的任务到 APScheduler。
+    如果 AI 总开关关闭，则跳过加载。
     """
+    if not ai_config.get_config("enable").data:
+        logger.info("⏰ [ScheduledTask] AI总开关已关闭，跳过定时任务加载")
+        return
+
     try:
         count = await reload_pending_tasks()
         logger.info(f"✅ [ScheduledTask] 定时任务调度器初始化完成，加载了 {count} 个待执行任务")

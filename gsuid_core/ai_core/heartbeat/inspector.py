@@ -104,6 +104,13 @@ class HeartbeatInspector:
         if self._running:
             return True
 
+        # 检查AI总开关
+        from gsuid_core.ai_core.configs.ai_config import ai_config
+
+        if not ai_config.get_config("enable").data:
+            logger.info("🫀 [Heartbeat] AI总开关已关闭，跳过定时巡检启动")
+            return False
+
         # 获取所有启用了定时巡检的 persona
         all_configs = persona_config_manager.get_all_configs()
         for persona_name in all_configs:

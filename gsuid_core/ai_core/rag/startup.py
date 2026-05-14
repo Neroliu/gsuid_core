@@ -4,6 +4,7 @@ from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start
 from gsuid_core.ai_core.register import get_all_tools
 from gsuid_core.ai_core.rag.tools import sync_tools
+from gsuid_core.ai_core.configs.ai_config import ai_config
 
 from .base import pre_download_models, init_embedding_model
 
@@ -11,6 +12,11 @@ from .base import pre_download_models, init_embedding_model
 @on_core_start
 async def init_all():
     """初始化RAG模块的所有组件"""
+    # 检查AI总开关
+    if not ai_config.get_config("enable").data:
+        logger.info("🧠 [RAG] AI总开关已关闭，跳过RAG模块初始化")
+        return
+
     # 0. 提前下载所有模型到缓存目录
     await pre_download_models()
 

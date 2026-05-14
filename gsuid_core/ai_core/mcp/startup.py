@@ -382,6 +382,12 @@ async def shutdown_mcp_clients() -> None:
 @on_core_start(priority=5)
 async def _on_start():
     """框架启动时注册 MCP 工具（优先级 5，在基础模块加载后执行）"""
+    from gsuid_core.ai_core.configs.ai_config import ai_config
+
+    if not ai_config.get_config("enable").data:
+        logger.info("🔌 [MCP] AI总开关已关闭，跳过MCP工具注册")
+        return
+
     await register_all_mcp_tools()
 
 

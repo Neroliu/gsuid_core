@@ -195,18 +195,25 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
             memory_mode: list[str] = memory_config.memory_mode
             memory_session: str = memory_config.memory_session
 
-            # 根据当前 session 获取对应的 persona 配置
-            from gsuid_core.ai_core.persona.config import persona_config_manager
+            # 基础条件检查：记忆开启、observer开启、包含"被动感知"
+            if is_enable_memory and memory_config.observer_enabled and "被动感知" in memory_mode:
+                should_observe = False
 
-            # 使用 Event.session_id 属性获取标准格式的 session_id
-            session_id = event.session_id
-            persona_name = persona_config_manager.get_persona_for_session(session_id)
+                if memory_session == "全部群聊":
+                    # 全部群聊模式：全部记录
+                    should_observe = True
+                elif memory_session == "按人格配置":
+                    # 按人格配置模式：只记录人格配置范围内的
+                    from gsuid_core.ai_core.persona.config import persona_config_manager
 
-            # 如果没有匹配的 persona 配置，直接返回，不执行 AI 处理
-            if persona_name is None and memory_session == "按人格配置":
-                pass
-            else:
-                if is_enable_memory and memory_config.observer_enabled and "被动感知" in memory_mode:
+                    session_id = event.session_id
+                    persona_name = persona_config_manager.get_persona_for_session(session_id)
+
+                    # get_persona_for_session 返回非 None 说明当前 session 已匹配人格范围
+                    if persona_name is not None:
+                        should_observe = True
+
+                if should_observe:
                     mem_task = asyncio.create_task(
                         observe(
                             content=event.raw_text,

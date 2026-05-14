@@ -8,6 +8,7 @@ from typing import Optional
 
 from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start
+from gsuid_core.ai_core.configs.ai_config import ai_config
 
 # 模块级引用，供 /api/chat_with_history 调用 flush_all()
 _ingestion_worker: Optional[object] = None
@@ -26,6 +27,11 @@ async def init_memory_system():
     注意：on_core_start 钩子由 core_start_execute() 按优先级顺序 await，
     同一钩子函数不会并发执行，因此无需加锁保护 _ingestion_worker。
     """
+    # 检查AI总开关
+    if not ai_config.get_config("enable").data:
+        logger.info("🧠 [Memory] AI总开关已关闭，跳过记忆系统初始化")
+        return
+
     from gsuid_core.ai_core.rag.base import client, init_embedding_model
 
     if client is None:

@@ -288,11 +288,11 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
     └── 如果没有命令匹配，进入 AI 处理流程
 ```
 
-### 2.2 AI 触发条件 (handler.py: 298-357)
+### 2.2 AI 触发条件 (handler.py: 432-502)
 
 ```python
 # 检查顺序
-1. enable_ai 全局开关检查
+1. enable_ai 全局开关检查（运行时动态读取）
    └── ai_config.get_config("enable").data
 
 2. 黑白名单检查
@@ -302,7 +302,7 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
    └── group_in_white_list = event.group_id in ai_white_list
 
 3. Persona 配置检查
-   ├── session_id = f"{bid}%%%{temp_gid}%%%{uid}"
+   ├── session_id = event.session_id
    └── persona_name = persona_config_manager.get_persona_for_session(session_id)
 
 4. AI Mode 检查
@@ -312,6 +312,9 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
 5. 任务入队
    └── ws.queue.put_nowait(TaskContext(coro=handle_ai_chat(...)))
 ```
+
+> **注意**: `enable_ai` 在 `handle_ai.py` 中改为**函数内动态读取**（`ai_config.get_config("enable").data`），
+> 而非模块级常量。这确保用户在 WebConsole 中切换 AI 总开关后，**无需重启框架即可生效**。
 
 ---
 
@@ -2457,11 +2460,25 @@ async def init_ai_core_statistics():
     history_manager = get_history_manager()
     await history_manager.start_cleanup_loop()
 
-    start_heartbeat_inspector()
+    # 检查AI总开关，仅在启用时启动定时巡检
+    if ai_config.get_config("enable").data:
+        start_heartbeat_inspector()
+    else:
+        logger.info("🧠 [AI] AI总开关已关闭，跳过定时巡检启动")
 
     statistics_manager._today = datetime.now().strftime("%Y-%m-%d")
     await statistics_manager._load_today_data_from_db()  # 从数据库加载今日数据
 ```
+
+> **注意**: 所有 AI 相关模块的 `@on_core_start` 钩子都增加了 `enable_ai` 总开关检查。
+> 当 AI 总开关关闭时，以下模块的初始化会被跳过：
+> - `rag/startup.py` - RAG 模块
+> - `persona/startup.py` - Persona 默认角色
+> - `memory/startup.py` - 记忆系统
+> - `statistics/startup.py` - 定时巡检（Heartbeat）
+> - `scheduled_task/startup.py` - 定时任务加载
+> - `mcp/startup.py` - MCP 工具注册
+> - `mcp/server.py` - MCP Server 启动
 
 #### 8.4.2 关闭时
 
@@ -3228,6 +3245,11 @@ if chat_result and _mc.observer_enabled:
 @on_core_start(priority=5)
 async def init_memory_system():
     """初始化记忆系统"""
+    # 检查AI总开关
+    if not ai_config.get_config("enable").data:
+        logger.info("🧠 [Memory] AI总开关已关闭，跳过记忆系统初始化")
+        return
+
     # 0. 检查 RAG 是否已启用（前置条件）
     from gsuid_core.ai_core.rag.base import client, init_embedding_model
     if client is None:
@@ -3576,11 +3598,11 @@ web_search(query)
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    handle_ai_chat(bot, event)                        │
 └──────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
+                                     │
+                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  1. enable_ai 检查                                                    │
-│     └── if not enable_ai: return                                     │
+│  1. enable_ai 检查（运行时动态读取）                                   │
+│     └── if not ai_config.get_config("enable").data: return           │
 └──────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -3882,6 +3904,7 @@ Session ID 格式说明:
 | D-18 | 🟡 设计 | hiergraph.py | Layer-1 Speaker归类仅依赖LLM遵守指令，代码层缺乏硬性保障 | ✅ 已修复 | 10.8 |
 | D-19 | 🟡 设计 | system1.py | System-1 One-hop邻居扩展未实现，与论文Section 2.3描述不符 | ✅ 已修复 | 10.7 |
 | D-20 | 🟡 正确性 | gs_agent.py | 强制总结（UsageLimitExceeded fallback）偏离用户原始问题，AI自我总结而非直接回答 | ✅ 已修复 | 5.6.3 |
+| D-21 | 🔴 安全 | 全局 | AI总开关关闭后，各模块启动钩子和定时任务仍可能执行AI逻辑 | ✅ 已修复 | 2.2/8.4.1 |
 
 ---
 
@@ -3905,3 +3928,4 @@ Session ID 格式说明:
 | 2026-04-24 | v3.2 | Memory 系统 Bug 修复与性能优化：修复 B-01（Edge 去重 key 拼接 f-string 错误，worker.py）；修复 B-02（entity 计数虚高导致频繁重建 hiergraph，models.py/entity.py/worker.py）；修复 B-03（_apply_entity_assignments 新建 Category 初始化缺失，hiergraph.py）；优化 P-01（Entity 向量去重串行改并行，models.py）；优化 P-04（Reranker 三路并行化，dual_route.py）；优化 P-03（ORM Relationship lazy='selectin' 改为 'noload'，消除 N+1 查询，models.py）；修复 M-06（Speaker 强制 Layer-1 归类硬性保障，hiergraph.py）；新增 System-1 One-hop 邻居扩展（system1.py/ops.py）；新增已知问题 D-12~D-17 |
 | 2026-05-05 | v4.0 | **MCP 重构 + Image Understand + Meme Module + Web Search 统一接口**：1.1 模块结构（新增 mcp/mcp_tool_caller.py、mcp/mcp_tools_config.py、image_understand/ 模块、meme/ 模块）；5.5.7 buildin 工具新增 web_fetch、send_meme/collect_meme/search_meme；5.5.12 MCP 工具集成全面更新（新增 register_as_ai_tools/tools 字段、MCP 工具 ID 格式、mcp_tools_config 配置、通用 call_mcp_tool 调用、MCP 预设配置、4 个新 API 端点）；8.0 MCP 配置 API 新增 tools/discover/import/presets 端点；新增 10.14 Meme 表情包模块（引用 MEME_MODULE.md）；新增 10.15 Image Understand 图片理解模块（MCP 驱动，GsCoreAIAgent._prepare_user_message 自动处理）；新增 10.16 Web Search 统一搜索接口（Tavily/Exa/MCP 三选一，MiniMax 搜索迁移至 MCP）；附录 A 新增 MCP/ImageUnderstand/Meme/WebSearch 相关文件路径 |
 | 2026-05-11 | v4.1 | **修复 D-20（强制总结偏离用户问题）v3 到 v4 演进**：v3 实现保留 `_last_user_question`、`_extract_known_facts()`、message_history 置空、无工具 Agent；v4 在 v3 基础上进一步把 `_extract_known_facts` 替换为 `_extract_run_context`（按轮次保留工具返回+LLM 中间推理），去掉 fallback Agent 冗余的 `deps_type/deps` 参数，修正错误处理避免消息双发；更新 5.6.3 节；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md` 技术报告；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT_v4.md` 最终版报告 |
+| 2026-05-14 | v4.2 | **AI 总开关控制全面修复**：1. `handle_ai.py` 中 `enable_ai` 改为函数内动态读取（`ai_config.get_config("enable").data`），确保 WebConsole 切换开关后无需重启即可生效；2. 所有 `@on_core_start` 钩子增加 `enable_ai` 检查：rag/startup.py、persona/startup.py、memory/startup.py、statistics/startup.py（heartbeat）、scheduled_task/startup.py、mcp/startup.py、mcp/server.py；3. `scheduled_task/executor.py` 执行前增加 `enable_ai` 检查；4. `heartbeat/inspector.py` 启动前增加 `enable_ai` 检查；5. 更新 2.2 节、8.4.1 节、10.12.3 节、12.2 节文档描述；6. 新增已知问题 D-21（AI 总开关控制不全面） |

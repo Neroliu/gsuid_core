@@ -332,6 +332,12 @@ def get_mcp_trigger_count() -> int:
 @on_core_start(priority=10)
 async def _on_start():
     """框架启动时启动 MCP Server（优先级 10，在 MCP 工具注册之后执行）。"""
+    from gsuid_core.ai_core.configs.ai_config import ai_config
+
+    if not ai_config.get_config("enable").data:
+        logger.info("🔌 [MCP] AI总开关已关闭，跳过MCP Server启动")
+        return
+
     global _server_task
     _server_task = asyncio.create_task(_start_mcp_server())
 

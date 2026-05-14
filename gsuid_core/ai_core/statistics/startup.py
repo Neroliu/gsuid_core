@@ -15,6 +15,7 @@ async def init_ai_core_statistics():
     history_manager = get_history_manager()
     await history_manager.start_cleanup_loop()
 
+    # 启动定时巡检（heartbeat/inspector.py 内部会检查 enable_ai）
     start_heartbeat_inspector()
 
     statistics_manager._today = datetime.now().strftime("%Y-%m-%d")

@@ -38,9 +38,6 @@ from gsuid_core.ai_core.memory.retrieval.dual_route import dual_route_retrieve
 
 # 导入表情包模块以注册 on_core_start 钩子和 @ai_tools
 
-# AI服务配置开关
-enable_ai: bool = ai_config.get_config("enable").data
-
 # 历史记录管理器
 history_manager = get_history_manager()
 
@@ -73,7 +70,7 @@ async def handle_ai_chat(bot: Bot, event: Event):
         bot: Bot对象，用于发送消息
         event: Event事件对象，包含用户输入和相关上下文
     """
-    if not enable_ai:
+    if not ai_config.get_config("enable").data:
         logger.debug("🧠 [GsCore][AI] AI服务未启用，跳过处理")
         return
 
