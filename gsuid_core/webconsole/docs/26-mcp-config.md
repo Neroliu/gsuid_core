@@ -15,6 +15,9 @@
 | args | array | 否 | 命令参数列表，默认 `[]` |
 | env | object | 否 | 环境变量字典，默认 `{}` |
 | enabled | boolean | 否 | 是否启用，默认 `true` |
+| register_as_ai_tools | boolean | 否 | 是否将 MCP 工具注册为 AI 工具，默认 `false` |
+| tools | array | 否 | 工具定义列表，默认 `[]` |
+| tool_permissions | object | 否 | 工具权限配置，键为工具名，值为权限等级，默认 `{}` |
 
 **配置文件示例**：
 ```json
@@ -23,7 +26,20 @@
     "command": "uvx",
     "args": ["minimax-coding-plan-mcp"],
     "env": {"MINIMAX_API_KEY": "your_key"},
-    "enabled": true
+    "enabled": true,
+    "register_as_ai_tools": false,
+    "tools": [
+        {
+            "name": "search_code",
+            "description": "搜索代码",
+            "parameters": {
+                "query": {"type": "string", "description": "搜索关键词"}
+            }
+        }
+    ],
+    "tool_permissions": {
+        "search_code": 6
+    }
 }
 ```
 
@@ -139,7 +155,10 @@ Content-Type: application/json
     "command": "uvx",
     "args": ["minimax-coding-plan-mcp"],
     "env": {"MINIMAX_API_KEY": "your_key"},
-    "enabled": true
+    "enabled": true,
+    "register_as_ai_tools": false,
+    "tools": [],
+    "tool_permissions": {}
 }
 ```
 
@@ -151,6 +170,20 @@ Content-Type: application/json
 | args | array | 否 | `[]` | 命令参数 |
 | env | object | 否 | `{}` | 环境变量 |
 | enabled | boolean | 否 | `true` | 是否启用 |
+| register_as_ai_tools | boolean | 否 | `false` | 是否将 MCP 工具注册为 AI 工具 |
+| tools | array | 否 | `[]` | 工具定义列表，见下方工具定义格式 |
+| tool_permissions | object | 否 | `{}` | 工具权限配置，键为工具名，值为权限等级 |
+
+**工具定义格式**：
+```json
+{
+    "name": "tool_name",
+    "description": "工具描述",
+    "parameters": {
+        "param1": {"type": "string", "description": "参数1"}
+    }
+}
+```
 
 **响应**：
 ```json
@@ -216,6 +249,9 @@ Content-Type: application/json
 | args | array | 否 | 命令参数 |
 | env | object | 否 | 环境变量 |
 | enabled | boolean | 否 | 是否启用 |
+| register_as_ai_tools | boolean | 否 | 是否将 MCP 工具注册为 AI 工具 |
+| tools | array | 否 | 工具定义列表 |
+| tool_permissions | object | 否 | 工具权限配置 |
 
 **响应**：
 ```json
@@ -354,6 +390,202 @@ Authorization: Bearer <token>
 
 ---
 
+## 26.8 获取 MCP 预设配置
+
+```
+GET /api/ai/mcp/presets
+```
+
+**描述**: 获取常用的 MCP 服务提供商预设配置，用户可以快速添加。预设包含默认的 command、args，但不包含实际的环境变量值。
+
+**响应**：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "presets": {
+            "minimax": {
+                "name": "MiniMax",
+                "command": "uvx",
+                "args": ["minimax-coding-plan-mcp"],
+                "env": {"MINIMAX_API_KEY": ""}
+            }
+        },
+        "count": 1
+    }
+}
+```
+
+---
+
+## 26.9 从已配置服务器发现工具
+
+```
+GET /api/ai/mcp/{config_id}/tools
+```
+
+**描述**: 连接已配置的 MCP 服务器并列出其提供的所有工具，包括工具名称、描述和参数定义。发现的工具可以用于更新配置中的 tools 列表。
+
+**路径参数**：
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| config_id | string | 是 | 配置 ID |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "config_id": "minimax",
+        "tools": [
+            {
+                "name": "search_code",
+                "description": "搜索代码",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索关键词"}
+                    }
+                }
+            }
+        ],
+        "count": 1
+    }
+}
+```
+
+**响应**（配置不存在）：
+```json
+{
+    "status": 1,
+    "msg": "MCP 配置 'xxx' 不存在",
+    "data": null
+}
+```
+
+---
+
+## 26.10 从临时配置发现工具
+
+```
+POST /api/ai/mcp/tools/discover
+```
+
+**描述**: 用户输入 MCP 服务器配置后，先连接服务器发现其提供的工具，确认后再决定是否保存配置。此接口不会保存配置。
+
+**请求体**：
+```json
+{
+    "name": "TestServer",
+    "command": "uvx",
+    "args": ["test-mcp"],
+    "env": {"API_KEY": "test_key"}
+}
+```
+
+**请求体字段说明**：
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | MCP 服务器名称 |
+| command | string | 是 | 启动命令 |
+| args | array | 否 | 命令参数，默认 `[]` |
+| env | object | 否 | 环境变量，默认 `{}` |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "tools": [
+            {
+                "name": "search_code",
+                "description": "搜索代码",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索关键词"}
+                    }
+                }
+            }
+        ],
+        "count": 1
+    }
+}
+```
+
+**响应**（连接失败）：
+```json
+{
+    "status": 1,
+    "msg": "连接 MCP 服务器失败: ...",
+    "data": null
+}
+```
+
+---
+
+## 26.11 从 JSON 配置导入 MCP 服务器
+
+```
+POST /api/ai/mcp/tools/import
+```
+
+**描述**: 支持粘贴 MCP 官方格式的 JSON 配置（如 MiniMax MCP 的配置），自动解析并创建配置。
+
+**请求体**：
+```json
+{
+    "json_config": "{\"mcpServers\":{\"MiniMax\":{\"command\":\"uvx\",\"args\":[\"minimax-coding-plan-mcp\"],\"env\":{\"MINIMAX_API_KEY\":\"your_key\"}}}}"
+}
+```
+
+**请求体字段说明**：
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| json_config | string | 是 | MCP 官方格式的 JSON 配置字符串，需包含 `mcpServers` 字段 |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "config_id": "minimax",
+        "name": "MiniMax",
+        "tools_count": 3,
+        "tool_names": ["search_code", "run_code", "explain_code"]
+    }
+}
+```
+
+**响应**（JSON 格式无效）：
+```json
+{
+    "status": 1,
+    "msg": "无效的 JSON 格式",
+    "data": null
+}
+```
+
+**响应**（配置已存在）：
+```json
+{
+    "status": 1,
+    "msg": "配置 'minimax' 已存在，请先删除或重命名",
+    "data": null
+}
+```
+
+**说明**：
+- 只处理 `mcpServers` 中的第一个服务器
+- 导入时会自动连接服务器发现工具列表
+- 如果连接失败，配置仍会创建，但 tools 列表为空
+
+---
+
 ## 前端使用建议
 
 1. **首次加载**：调用 `GET /api/ai/mcp/list` 获取所有配置列表
@@ -363,3 +595,6 @@ Authorization: Bearer <token>
 5. **启用/禁用**：调用 `POST /api/ai/mcp/{config_id}/toggle` 切换状态，工具会自动注册或注销
 6. **批量刷新**：调用 `POST /api/ai/mcp/reload` 重新加载所有配置并重新注册所有工具
 7. **查看已注册工具**：调用 `GET /api/ai/tools/list?category=mcp` 查看所有已注册的 MCP 工具
+8. **使用预设**：调用 `GET /api/ai/mcp/presets` 获取预设配置，快速填充表单
+9. **发现工具**：在保存配置前，调用 `POST /api/ai/mcp/tools/discover` 预览服务器提供的工具
+10. **导入配置**：调用 `POST /api/ai/mcp/tools/import` 从 MCP 官方 JSON 配置导入

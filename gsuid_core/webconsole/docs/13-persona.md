@@ -88,7 +88,63 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.3 获取角色头像
+## 13.3 更新角色内容
+
+```
+PUT /api/persona/{persona_name}/content
+```
+
+**请求头**：
+```
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**路径参数**：
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| persona_name | string | 角色名称 |
+
+**请求体**：
+```json
+{
+    "content": "# 角色名\n\n更新后的角色描述内容（Markdown格式）..."
+}
+```
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "人格内容更新成功",
+    "data": {
+        "name": "角色名",
+        "content": "# 角色名\n\n更新后的角色描述内容（Markdown格式）..."
+    }
+}
+```
+
+**错误响应**（角色不存在）：
+```json
+{
+    "status": 1,
+    "msg": "角色 'xxx' 不存在",
+    "data": null
+}
+```
+
+**错误响应**（内容为空）：
+```json
+{
+    "status": 1,
+    "msg": "请提供内容",
+    "data": null
+}
+```
+
+---
+
+## 13.4 获取角色头像
 
 ```
 GET /api/persona/{persona_name}/avatar
@@ -110,7 +166,7 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.4 获取角色立绘
+## 13.5 获取角色立绘
 
 ```
 GET /api/persona/{persona_name}/image
@@ -132,7 +188,7 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.5 获取角色音频
+## 13.6 获取角色音频
 
 ```
 GET /api/persona/{persona_name}/audio
@@ -163,7 +219,7 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.6 上传角色头像
+## 13.7 上传角色头像
 
 ```
 POST /api/persona/{persona_name}/avatar
@@ -209,7 +265,7 @@ Content-Type: application/json
 
 ---
 
-## 13.7 上传角色立绘
+## 13.8 上传角色立绘
 
 ```
 POST /api/persona/{persona_name}/image
@@ -255,7 +311,7 @@ Content-Type: application/json
 
 ---
 
-## 13.8 上传角色音频
+## 13.9 上传角色音频
 
 ```
 POST /api/persona/{persona_name}/audio
@@ -319,7 +375,7 @@ Content-Type: application/json
 
 ---
 
-## 13.9 创建新角色
+## 13.10 创建新角色
 
 ```
 POST /api/persona/create
@@ -362,7 +418,77 @@ Content-Type: application/json
 
 ---
 
-## 13.10 删除角色
+## 13.11 直接添加角色
+
+```
+POST /api/persona/add
+```
+
+**请求头**：
+```
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+**请求体**：
+```json
+{
+    "name": "角色名称",
+    "content": "# 角色名\n\n角色内容（Markdown格式）..."
+}
+```
+
+**请求字段说明**：
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | 是 | 角色名称 |
+| content | string | 是 | 角色内容（Markdown格式） |
+
+**响应**（成功）：
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "name": "角色名称",
+        "content": "# 角色名\n\n角色内容（Markdown格式）..."
+    }
+}
+```
+
+**错误响应**（角色已存在）：
+```json
+{
+    "status": 1,
+    "msg": "角色 'xxx' 已存在",
+    "data": null
+}
+```
+
+**错误响应**（名称为空）：
+```json
+{
+    "status": 1,
+    "msg": "请提供角色名称",
+    "data": null
+}
+```
+
+**错误响应**（内容为空）：
+```json
+{
+    "status": 1,
+    "msg": "请提供角色内容",
+    "data": null
+}
+```
+
+**说明**：
+> 与 `POST /api/persona/create` 不同，`POST /api/persona/add` 是直接添加角色，前端只需传入角色名称和内容即可保存，无需传递立绘、头像、音频等资源文件（后续可通过其他接口单独上传）。
+
+---
+
+## 13.12 删除角色
 
 ```
 DELETE /api/persona/{persona_name}
@@ -391,7 +517,7 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.11 获取角色配置
+## 13.13 获取角色配置
 
 ```
 GET /api/persona/{persona_name}/config
@@ -441,7 +567,7 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.12 更新角色配置
+## 13.14 更新角色配置
 
 ```
 PUT /api/persona/{persona_name}/config
@@ -521,7 +647,7 @@ Content-Type: application/json
 
 ---
 
-## 13.13 获取全局启用的角色
+## 13.15 获取全局启用的角色
 
 ```
 GET /api/persona/config/global
@@ -552,7 +678,7 @@ Authorization: Bearer <token>
 
 ---
 
-## 13.14 获取所有角色配置
+## 13.16 获取所有角色配置
 
 ```
 GET /api/persona/config/all

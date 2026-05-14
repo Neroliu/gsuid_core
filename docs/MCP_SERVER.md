@@ -98,20 +98,9 @@
 
 ### 4. 使用 stdio 模式（本地进程间通信）
 
-如果选择 stdio 模式，需要通过命令行启动 MCP Server：
+如果选择 stdio 模式，在 AI 配置中将 `mcp_server_transport` 设置为 `"stdio"`，然后重启框架。框架启动时会自动以 stdio 模式运行 MCP Server。
 
-```json
-{
-  "mcpServers": {
-    "gscore": {
-      "command": "python",
-      "args": ["-m", "gsuid_core.ai_core.mcp.server_stdio"]
-    }
-  }
-}
-```
-
-> **注意**: stdio 模式需要框架以独立进程方式运行，适合本地开发调试。
+> **注意**: stdio 模式下 MCP Server 与框架主进程共享标准输入输出，适合被本地 MCP 客户端（如 Claude Desktop）直接调用。SSE 模式则适合远程连接。
 
 ## 工具命名规则
 

@@ -835,6 +835,8 @@ async def reload_plugin_api(request: Request, plugin_name: str, _user: Dict = De
         msg: 操作结果信息
     """
     result = reload_plugin(plugin_name)
+    if result.lstrip().startswith("❌"):
+        return {"status": 1, "msg": result}
     return {"status": 0, "msg": result}
 
 

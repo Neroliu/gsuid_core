@@ -18,29 +18,22 @@ dependencies = [
     "msgspec>=0.13.1",
     "uvicorn>=0.20.0",
     "websockets>=13.1",
-    "urllib3<2.0.0,>=1.26.15",
+    "urllib3>=1.26.15,<3.0.0",
     "mpmath<2.0.0,>=1.3.0",
-    "fastapi>=0.97.0,<0.112.3",
+    "fastapi>=0.97.0",
     "apscheduler<4.0.0,>=3.10.1",
     "aioboto3<13.0.0,>=12.0.0",
     "jinja2<4.0.0,>=3.1.2",
     "colorama<1.0.0,>=0.4.6",
     "async-timeout>=4.0.3",
     "toml>=0.10.2",
-    "bcrypt==4.0.1",
+    "bcrypt>=4.0.1,<5.0.0",
     "setuptools>=69.0.3",
     "email-validator>=2.2.0",
     "annotated-types>=0.7.0",
     "sqlmodel<0.0.31",
-    "fastapi<0.112.3",
-    "async-timeout<5.0.0,>=4.0.3",
-    "toml<1.0.0,>=0.10.2",
-    "bcrypt<5.0.0,>=4.0.1",
-    "email-validator<3.0.0,>=2.2.0",
     "psutil>=6.1.1",
     "pytz>=2024.2",
-    "pandas>=2.2.3",
-    "betterproto>=2.0.0b7",
     "structlog>=25.3.0",
     "rich>=14.0.0",
     "cryptography>=45.0.5",
@@ -55,7 +48,6 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "pydantic>=2.12.2",
     "pydantic-settings>=2.12.0",
-    "pydantic-core>=2.20.1",
     "playwright>=1.58.0",
     "fastembed>=0.7.4",
     "qdrant-client>=1.17.0",
@@ -69,29 +61,15 @@ dependencies = [
     "fastmcp>=2.0.0",
     "markdownify>=1.2.2",
     "onnxruntime>=1.24.1",
-    "pyhtmlrender>=0.1.4",
+    "pyhtmlrender>=0.1.5",
 ]
 name = "gsuid-core"
-version = "0.10.2"
+version = "0.10.3"
 description = "KimigaiiWuyi/GenshinUID 的核心部分，平台无关，便于移植到其他平台以及框架。"
 readme = "README.md"
 
-[tool.poetry.requires-plugins]
-poetry-plugin-export = ">=1.8"
-
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.14.7"
-pre-commit = "^2.21.0"
-pytest = "^8.3.0"
-
-[tool.pdm.scripts]
-core = "gsuid_core/core.py"
-
-[tool.pdm.dev-dependencies]
-dev = ["ruff>=0.14.7", "pre-commit>=2.21.0", "pytest>=8.3.0"]
-
-[tool.pdm.build]
-includes = ["gsuid_core"]
+[project.scripts]
+core = "gsuid_core.core:main"
 
 [build-system]
 requires = ["pdm-backend"]
@@ -99,13 +77,6 @@ build-backend = "pdm.backend"
 
 [dependency-groups]
 dev = ["ruff>=0.14.7", "pre-commit>=2.21.0", "pytest>=8.3.0"]
-
-[tool.uv]
-default-groups = []
-
-[tool.pdm.resolution]
-respect-source-order = true
-
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -118,9 +89,8 @@ addopts = "-v --tb=short"
 homepage = "https://github.com/Genshin-bots/gsuid-core"
 repository = "https://github.com/Genshin-bots/gsuid-core"
 
-[project.scripts]
-core = "gsuid_core.core:main"
+[tool.uv]
+default-groups = []
 
-
-[tool.uv.extra-build-dependencies]
-py-rust-stemmers = ["maturin"]
+[tool.pdm.resolution]
+respect-source-order = true

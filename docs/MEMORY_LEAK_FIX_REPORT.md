@@ -133,7 +133,7 @@ async def disconnect(self, bot_id: str):
             del Bot.mutiply_instances[sid]
 
         # 5. 清理 Bot.mutiply_map 中对应的映射
-        # 假设：mutiply_map 的结构为 {gid: session_id}，与 mutiply_instances 的 key 对应
+        # mutiply_map 的结构为 {temp_gid: session_id}，与 mutiply_instances 的 key 对应
         map_keys_to_remove = [
             gid for gid, sid in Bot.mutiply_map.items() if sid in mutiply_ids_to_remove
         ]

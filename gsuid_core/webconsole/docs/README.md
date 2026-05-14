@@ -48,7 +48,9 @@ GsCore WebConsole 提供基于 FastAPI 的 RESTful API，供前端 React 应用�
 24. [Provider Config API - /api/provider_config](./24-provider-config.md)
 25. [Git 镜像源管理 API - /api/git-mirror](./25-git-mirror.md)
 26. [MCP Config API - /api/ai/mcp](./26-mcp-config.md)
-27. [Git 版本管理 API - /api/git-update](./28-git-update.md)
+27. [嵌入模型配置 API - /api/embedding_config](./27-embedding-config.md)
+28. [Git 版本管理 API - /api/git-update](./28-git-update.md)
+29. [表情包管理 API - /api/meme](./29-meme.md)
 
 ---
 

@@ -115,10 +115,12 @@ agent_mesh/
 
 | 工具名 | category | 说明 |
 |--------|----------|------|
-| `create_persistent_agent_tool` | self | 创建持久化子 Agent |
-| `send_agent_task_tool` | self | 向持久化 Agent 发送任务 |
-| `list_agents_tool` | buildin | 列出所有活跃的持久化 Agent |
-| `stop_agent_tool` | self | 停止指定的持久化 Agent |
+| `create_persistent_agent_tool` | common | 创建持久化子 Agent |
+| `send_agent_task_tool` | common | 向持久化 Agent 发送任务 |
+| `list_agents_tool` | common | 列出所有活跃的持久化 Agent |
+| `stop_agent_tool` | common | 停止指定的持久化 Agent |
+
+> **注意**：以上工具均注册为 `category="common"`，主Agent和子Agent均可调用。
 
 ### 2.5 生命周期管理
 
@@ -353,5 +355,6 @@ effective_intensity = intensity * 0.5^(elapsed / 1800)
 | `gsuid_core/ai_core/ai_router.py` | 获取群聊上下文注入 Persona |
 | `gsuid_core/ai_core/handle_ai.py` | 情绪状态更新集成 |
 | `gsuid_core/ai_core/buildin_tools/__init__.py` | 注册 Agent Mesh 工具 |
+| `gsuid_core/ai_core/buildin_tools/web_fetch.py` | 新增网页抓取 AI 工具 |
 | `gsuid_core/ai_core/image_understand/understand.py` | 同步IO改为 aiofiles |
 | `gsuid_core/webconsole/mcp_config_api.py` | API 支持 `tool_permissions` |

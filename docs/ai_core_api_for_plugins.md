@@ -102,15 +102,20 @@ from gsuid_core.ai_core.models import (
 # ============================================================
 from gsuid_core.ai_core.mcp import (
     MCPClient,               # MCP 客户端
-    MCPConfig,               # MCP 配置数据类
-    MCPToolDefinition,       # MCP 工具定义
-    MCPConfigManager,        # MCP 配置管理器
-    mcp_config_manager,      # 全局 MCP 配置管理器单例
-    parse_mcp_tool_id,       # 解析 MCP 工具 ID
+    MCPToolInfo,              # MCP 工具信息
+    MCPToolResult,            # MCP 工具调用结果
+    MCPConfig,                # MCP 配置数据类
+    MCPToolDefinition,        # MCP 工具定义
+    MCPConfigManager,         # MCP 配置管理器
+    mcp_config_manager,       # 全局 MCP 配置管理器单例
+    MCP_PRESETS,              # MCP 预设配置列表
+    parse_mcp_tool_id,        # 解析 MCP 工具 ID
     format_mcp_tool_id,      # 格式化 MCP 工具 ID
-    register_all_mcp_tools,  # 注册所有 MCP 工具
+    register_all_mcp_tools,   # 注册所有 MCP 工具
     register_single_mcp_server,  # 注册单个 MCP 服务器
     unregister_mcp_server,   # 注销 MCP 服务器
+    get_mcp_server,           # 获取 MCP Server 实例
+    get_mcp_trigger_count,    # 获取 MCP 触发器注册数量
 )
 
 from gsuid_core.ai_core.mcp.mcp_tool_caller import (
@@ -146,25 +151,39 @@ from gsuid_core.ai_core.buildin_tools import (
     update_user_favorability,   # 更新用户好感度（增量）
     create_subagent,            # 创建子Agent完成特定任务
     send_message_by_ai,         # 发送消息给用户
-
-    # --- Buildin 工具 (category="buildin") ---
-    # 主Agent调用时也会加载，直接调用不会拒绝
-    search_knowledge,           # 知识库检索
-    web_search_tool,            # Web搜索
-    web_fetch_tool,             # 网页抓取（转Markdown）
-    query_user_memory,          # 查询用户记忆
-    get_self_persona_info,      # 获取自身Persona信息
-
-    # --- Common 工具 (category="common") ---
-    # 有选择地调用，当用户明确需要相关功能时使用
     add_once_task,              # 添加一次性定时任务
     add_interval_task,          # 添加循环任务
     list_scheduled_tasks,       # 列出所有定时任务
     query_scheduled_task,       # 查询任务详情
     modify_scheduled_task,      # 修改任务
-    cancel_scheduled_task,       # 取消任务
+    cancel_scheduled_task,      # 取消任务
     pause_scheduled_task,       # 暂停任务
     resume_scheduled_task,      # 恢复任务
+
+    # --- Buildin 工具 (category="buildin") ---
+    # 主Agent调用时也会加载，直接调用不会拒绝
+    search_knowledge,           # 知识库检索
+    search_image,               # 图片检索
+    web_search_tool,            # Web搜索
+    web_fetch_tool,             # 网页抓取（转Markdown）
+    query_user_memory,          # 查询用户记忆
+    get_self_persona_info,      # 获取自身Persona信息
+    set_user_favorability,      # 设置用户好感度（绝对值）
+
+    # --- Common 工具 (category="common") ---
+    # 有选择地调用，当用户明确需要相关功能时使用
+    send_meme,                  # 发送表情包
+    collect_meme,               # 收藏表情包
+    search_meme,                # 搜索表情包
+    create_persistent_agent_tool,  # 创建持久化子Agent
+    send_agent_task_tool,       # 向持久化Agent发送任务
+    list_agents_tool,           # 列出所有活跃的持久化Agent
+    stop_agent_tool,            # 停止指定的持久化Agent
+
+    # --- Media 工具 (category="media") ---
+    # 多媒体渲染工具
+    render_html_to_image,       # 将HTML渲染为图片
+    render_markdown_to_image,    # 将Markdown渲染为图片
 
     # --- Default 工具 (category="default") ---
     # 通过 create_subagent 调用，用于文件操作、代码执行等
@@ -397,24 +416,45 @@ _TOOL_REGISTRY: Dict[str, Dict[str, ToolBase]] = {
         "update_user_favorability": ToolBase(...),
         "create_subagent": ToolBase(...),
         "send_message_by_ai": ToolBase(...),
-    },
-    "buildin": {
-        "search_knowledge": ToolBase(...),
-        "web_search": ToolBase(...),
-        "query_user_memory": ToolBase(...),
-    },
-    "common": {
-        "get_self_persona_info": ToolBase(...),
         "add_once_task": ToolBase(...),
         "add_interval_task": ToolBase(...),
         "list_scheduled_tasks": ToolBase(...),
-        # ... 其他 common 工具
+        "query_scheduled_task": ToolBase(...),
+        "modify_scheduled_task": ToolBase(...),
+        "cancel_scheduled_task": ToolBase(...),
+        "pause_scheduled_task": ToolBase(...),
+        "resume_scheduled_task": ToolBase(...),
+    },
+    "buildin": {
+        "search_knowledge": ToolBase(...),
+        "search_image": ToolBase(...),
+        "web_search_tool": ToolBase(...),
+        "web_fetch_tool": ToolBase(...),
+        "query_user_memory": ToolBase(...),
+        "get_self_persona_info": ToolBase(...),
+        "set_user_favorability": ToolBase(...),
+    },
+    "common": {
+        "send_meme": ToolBase(...),
+        "collect_meme": ToolBase(...),
+        "search_meme": ToolBase(...),
+        "create_persistent_agent_tool": ToolBase(...),
+        "send_agent_task_tool": ToolBase(...),
+        "list_agents_tool": ToolBase(...),
+        "stop_agent_tool": ToolBase(...),
+    },
+    "media": {
+        "render_html_to_image": ToolBase(...),
+        "render_markdown_to_image": ToolBase(...),
     },
     "default": {
         "execute_shell_command": ToolBase(...),
         "get_current_date": ToolBase(...),
         "read_file_content": ToolBase(...),
-        # ... 其他 default 工具
+        "write_file_content": ToolBase(...),
+        "execute_file": ToolBase(...),
+        "diff_file_content": ToolBase(...),
+        "list_directory": ToolBase(...),
     },
     "my_plugin": {
         "my_custom_tool": ToolBase(...),
@@ -429,7 +469,9 @@ _TOOL_REGISTRY: Dict[str, Dict[str, ToolBase]] = {
 | `"self"` | 核心自我操作工具，只有主Agent能调用 | 主Agent（Main Agent） |
 | `"buildin"` | 内置工具，主Agent调用时也会加载 | 主Agent（Main Agent） |
 | `"common"` | 通用工具，有选择地调用 | 主Agent（Main Agent） |
+| `"media"` | 多媒体渲染工具 | 主Agent（Main Agent） |
 | `"default"` | 子Agent工具，需通过 `create_subagent` 调用 | 子Agent（Sub Agent） |
+| `"mcp"` | MCP 外部工具，启动时自动注册，按需加载 | 主Agent（Main Agent） |
 | `"<自定义>"` | 插件自定义分类 | 根据配置决定 |
 
 ### 3.3 Agent 调用架构
@@ -437,22 +479,30 @@ _TOOL_REGISTRY: Dict[str, Dict[str, ToolBase]] = {
 ```
 ┌─────────────────────────────────────────────────────┐
 │              主Agent (Main Agent)                   │
-│         使用 category="self", "buildin", "common"    │
+│    使用 category="self", "buildin", "common", "media" │
 │                                                     │
 │  Self工具:                                           │
-│  - query_user_favorability - create_subagent        │
-│  - send_message_by_ai     - update_user_favorability│
-│                                                     │
-│  Buildin工具:                                        │
-│  - search_knowledge       - web_search_tool          │
-│  - web_fetch_tool         - query_user_memory        │
-│  - get_self_persona_info                             │
-│                                                     │
-│  Common工具:                                         │
+│  - query_user_favorability - update_user_favorability│
+│  - create_subagent        - send_message_by_ai      │
 │  - add_once_task          - add_interval_task        │
 │  - list_scheduled_tasks   - query_scheduled_task     │
 │  - modify_scheduled_task  - cancel_scheduled_task    │
 │  - pause_scheduled_task   - resume_scheduled_task    │
+│                                                     │
+│  Buildin工具:                                        │
+│  - search_knowledge       - search_image             │
+│  - web_search_tool        - web_fetch_tool           │
+│  - query_user_memory      - get_self_persona_info    │
+│  - set_user_favorability                             │
+│                                                     │
+│  Common工具:                                         │
+│  - send_meme              - collect_meme             │
+│  - search_meme            - create_persistent_agent  │
+│  - send_agent_task        - list_agents              │
+│  - stop_agent                                       │
+│                                                     │
+│  Media工具:                                          │
+│  - render_html_to_image   - render_markdown_to_image │
 └─────────────────────────┬───────────────────────────┘
                           │ create_subagent()
                           ▼
@@ -628,7 +678,7 @@ AI 可以：
 
 ## 5. create_agent 与 Agent 架构
 
-### 4.1 create_agent - 创建临时 Agent
+### 5.1 create_agent - 创建临时 Agent
 
 ```python
 from gsuid_core.ai_core.gs_agent import create_agent
@@ -676,7 +726,7 @@ async def translate(text: str) -> str:
     return result
 ```
 
-### 4.2 GsCoreAIAgent.run() 方法
+### 5.2 GsCoreAIAgent.run() 方法
 
 ```python
 async def run(
@@ -703,7 +753,7 @@ async def run(
 
 **返回**: AI 响应字符串，或指定的 Pydantic 模型实例
 
-### 4.3 get_main_agent_tools - 获取主Agent工具列表
+### 5.3 get_main_agent_tools - 获取主Agent工具列表
 
 ```python
 from gsuid_core.ai_core.rag.tools import get_main_agent_tools
@@ -713,7 +763,7 @@ def get_main_agent_tools() -> ToolList
 
 返回所有 `category="self"` 和 `"buildin"` 的工具列表，用于构建主Agent。
 
-### 4.4 handle_ai_chat - AI聊天入口
+### 5.4 handle_ai_chat - AI聊天入口
 
 ```python
 from gsuid_core.ai_core.handle_ai import handle_ai_chat
@@ -733,7 +783,7 @@ async def handle_ai_chat(bot: Bot, event: Event)
 
 ## 6. 知识库注册
 
-### 5.1 ai_entity - 插件知识注册
+### 6.1 ai_entity - 插件知识注册
 
 **入口**：
 
@@ -798,7 +848,7 @@ ai_entity(KnowledgePoint(
 - 内容发生变化时（通过 `_hash` 检测）自动增量更新
 - 在 `plugins/` 目录下注册时 `plugin` 字段会被自动推断
 
-### 5.2 add_manual_knowledge - 手动知识添加
+### 6.2 add_manual_knowledge - 手动知识添加
 
 **入口**：
 
@@ -828,7 +878,7 @@ success = add_manual_knowledge(ManualKnowledgeBase(
 ))
 ```
 
-### 5.3 手动知识管理 API
+### 6.3 手动知识管理 API
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -851,13 +901,13 @@ success = add_manual_knowledge(ManualKnowledgeBase(
 
 ## 7. 别名注册
 
-### 6.1 入口
+### 7.1 入口
 
 ```python
 from gsuid_core.ai_core.register import ai_alias
 ```
 
-### 6.2 函数签名
+### 7.2 函数签名
 
 ```python
 def ai_alias(name: str, alias: Union[str, List[str]]) -> None
@@ -865,14 +915,14 @@ def ai_alias(name: str, alias: Union[str, List[str]]) -> None
 
 别名系统用于 LLM 调用前进行**专有名词归一化**，将用户输入的别名统一替换为标准名称。
 
-### 6.3 参数说明
+### 7.3 参数说明
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `name` | `str` | 标准名称（归一化目标） |
 | `alias` | `str \| List[str]` | 别名，可以是单个字符串或列表 |
 
-### 6.4 示例
+### 7.4 示例
 
 ```python
 from gsuid_core.ai_core.register import ai_alias
@@ -898,20 +948,20 @@ for name, aliases in ALIASES.items():
 
 ## 8. 图片实体注册
 
-### 7.1 入口
+### 8.1 入口
 
 ```python
 from gsuid_core.ai_core.register import ai_image
 from gsuid_core.ai_core.models import ImageEntity
 ```
 
-### 7.2 函数签名
+### 8.2 函数签名
 
 ```python
 def ai_image(entity: ImageEntity) -> None
 ```
 
-### 7.3 ImageEntity 字段
+### 8.3 ImageEntity 字段
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -923,7 +973,7 @@ def ai_image(entity: ImageEntity) -> None
 | `source` | `str` | 自动 | 固定为 `"plugin"` |
 | `_hash` | `str` | 自动 | 内容哈希，传入空字符串即可 |
 
-### 7.4 示例
+### 8.4 示例
 
 ```python
 from gsuid_core.ai_core.register import ai_image
@@ -940,7 +990,7 @@ ai_image(ImageEntity(
 ))
 ```
 
-### 7.5 图片检索使用
+### 8.5 图片检索使用
 
 注册图片后，AI 可以通过 RAG API 进行语义检索：
 
@@ -960,7 +1010,7 @@ async def show_character_image(bot, ev):
 
 所有内置工具均已注册到全局工具注册表，可直接在插件中使用或让 AI 自动调用。
 
-### 8.1 Self 工具（category="self"）
+### 9.1 Self 工具（category="self"）
 
 只有主Agent能调用，用于核心自我操作。
 
@@ -1015,9 +1065,94 @@ async def send_message_by_ai(
 ) -> str
 ```
 
+#### add_once_task - 添加一次性定时任务
+
+```python
+@ai_tools(category="self")
+async def add_once_task(
+    ctx: RunContext[ToolContext],
+    run_time: str,               # 执行时间，格式 "YYYY-MM-DD HH:MM:SS"
+    task_prompt: str,            # 任务描述
+) -> str
+```
+
+#### add_interval_task - 添加循环任务
+
+```python
+@ai_tools(category="self")
+async def add_interval_task(
+    ctx: RunContext[ToolContext],
+    interval_value: int,         # 间隔值
+    task_prompt: str,            # 任务描述
+    interval_type: str = "minutes",  # 间隔类型: "minutes"/"hours"/"days"
+    max_executions: int = 10,    # 最大执行次数（上限10）
+) -> str
+```
+
+#### list_scheduled_tasks - 列出所有定时任务
+
+```python
+@ai_tools(category="self")
+async def list_scheduled_tasks(
+    ctx: RunContext[ToolContext],
+) -> str
+```
+
+#### query_scheduled_task - 查询任务详情
+
+```python
+@ai_tools(category="self")
+async def query_scheduled_task(
+    ctx: RunContext[ToolContext],
+    task_id: str,                # 任务ID
+) -> str
+```
+
+#### modify_scheduled_task - 修改任务
+
+```python
+@ai_tools(category="self")
+async def modify_scheduled_task(
+    ctx: RunContext[ToolContext],
+    task_id: str,                # 任务ID
+    task_prompt: Optional[str] = None,    # 新的任务描述
+    max_executions: Optional[int] = None, # 新的最大执行次数（仅循环任务）
+) -> str
+```
+
+#### cancel_scheduled_task - 取消任务
+
+```python
+@ai_tools(category="self")
+async def cancel_scheduled_task(
+    ctx: RunContext[ToolContext],
+    task_id: str,                # 任务ID
+) -> str
+```
+
+#### pause_scheduled_task - 暂停任务
+
+```python
+@ai_tools(category="self")
+async def pause_scheduled_task(
+    ctx: RunContext[ToolContext],
+    task_id: str,                # 任务ID
+) -> str
+```
+
+#### resume_scheduled_task - 恢复任务
+
+```python
+@ai_tools(category="self")
+async def resume_scheduled_task(
+    ctx: RunContext[ToolContext],
+    task_id: str,                # 任务ID
+) -> str
+```
+
 ---
 
-### 8.2 Buildin 工具（category="buildin"）
+### 9.2 Buildin 工具（category="buildin"）
 
 主Agent调用时也会加载，直接调用不会拒绝。
 
@@ -1030,6 +1165,18 @@ async def search_knowledge(
     query: str,                      # 自然语言查询
     category: Optional[str] = None, # 知识类别筛选（可选）
     plugin: Optional[str] = None,   # 插件来源筛选（可选）
+    limit: int = 10,                # 最大返回数量
+    score_threshold: float = 0.45,  # 相似度阈值（0~1）
+) -> str
+```
+
+#### search_image - 图片检索
+
+```python
+@ai_tools(category="buildin")
+async def search_image(
+    ctx: RunContext[ToolContext],
+    query: str,                      # 自然语言查询
     limit: int = 10,                # 最大返回数量
     score_threshold: float = 0.45,  # 相似度阈值（0~1）
 ) -> str
@@ -1088,100 +1235,128 @@ async def get_self_persona_info(
 | `"avatar"` | 头像图片路径 |
 | `"audio"` | 音频文件路径 |
 
+#### set_user_favorability - 设置用户好感度（绝对值）
+
+```python
+@ai_tools(category="buildin")
+async def set_user_favorability(
+    ctx: RunContext[ToolContext],
+    value: int,                     # 好感度绝对值
+    user_id: Optional[str] = None,
+) -> str
+```
+
 ---
 
-### 8.3 Common 工具（category="common"）
+### 9.3 Common 工具（category="common"）
 
 有选择地调用，当用户明确需要相关功能时使用。
 
-#### add_once_task - 添加一次性定时任务
+#### send_meme - 发送表情包
 
 ```python
 @ai_tools(category="common")
-async def add_once_task(
+async def send_meme(
     ctx: RunContext[ToolContext],
-    run_time: str,               # 执行时间，格式 "YYYY-MM-DD HH:MM:SS"
-    task_prompt: str,            # 任务描述
+    mood: Optional[str] = None,    # 情绪标签
+    scene: Optional[str] = None,   # 场景标签
 ) -> str
 ```
 
-#### add_interval_task - 添加循环任务
+#### collect_meme - 收藏表情包
 
 ```python
 @ai_tools(category="common")
-async def add_interval_task(
+async def collect_meme(
     ctx: RunContext[ToolContext],
-    interval_value: int,         # 间隔值
-    task_prompt: str,            # 任务描述
-    interval_type: str = "minutes",  # 间隔类型: "minutes"/"hours"/"days"
-    max_executions: int = 10,    # 最大执行次数（上限10）
+    url: str,                      # 图片URL
+    tags: Optional[str] = None,   # 自定义标签
 ) -> str
 ```
 
-#### list_scheduled_tasks - 列出所有定时任务
+#### search_meme - 搜索表情包
 
 ```python
 @ai_tools(category="common")
-async def list_scheduled_tasks(
+async def search_meme(
+    ctx: RunContext[ToolContext],
+    query: str,                    # 搜索关键词
+) -> str
+```
+
+#### create_persistent_agent_tool - 创建持久化子Agent
+
+```python
+@ai_tools(category="common")
+async def create_persistent_agent_tool(
+    ctx: RunContext[ToolContext],
+    name: str,                     # Agent 名称
+    system_prompt: str,            # 系统提示词
+    idle_timeout_minutes: int = 60, # 空闲超时时间（分钟）
+) -> str
+```
+
+#### send_agent_task_tool - 向持久化Agent发送任务
+
+```python
+@ai_tools(category="common")
+async def send_agent_task_tool(
+    ctx: RunContext[ToolContext],
+    agent_name: str,               # Agent 名称
+    task: str,                     # 任务描述
+) -> str
+```
+
+#### list_agents_tool - 列出所有活跃的持久化Agent
+
+```python
+@ai_tools(category="common")
+async def list_agents_tool(
     ctx: RunContext[ToolContext],
 ) -> str
 ```
 
-#### query_scheduled_task - 查询任务详情
+#### stop_agent_tool - 停止指定的持久化Agent
 
 ```python
 @ai_tools(category="common")
-async def query_scheduled_task(
+async def stop_agent_tool(
     ctx: RunContext[ToolContext],
-    task_id: str,                # 任务ID
-) -> str
-```
-
-#### modify_scheduled_task - 修改任务
-
-```python
-@ai_tools(category="common")
-async def modify_scheduled_task(
-    ctx: RunContext[ToolContext],
-    task_id: str,                # 任务ID
-    task_prompt: Optional[str] = None,    # 新的任务描述
-    max_executions: Optional[int] = None, # 新的最大执行次数（仅循环任务）
-) -> str
-```
-
-#### cancel_scheduled_task - 取消任务
-
-```python
-@ai_tools(category="common")
-async def cancel_scheduled_task(
-    ctx: RunContext[ToolContext],
-    task_id: str,                # 任务ID
-) -> str
-```
-
-#### pause_scheduled_task - 暂停任务
-
-```python
-@ai_tools(category="common")
-async def pause_scheduled_task(
-    ctx: RunContext[ToolContext],
-    task_id: str,                # 任务ID
-) -> str
-```
-
-#### resume_scheduled_task - 恢复任务
-
-```python
-@ai_tools(category="common")
-async def resume_scheduled_task(
-    ctx: RunContext[ToolContext],
-    task_id: str,                # 任务ID
+    agent_name: str,               # Agent 名称
 ) -> str
 ```
 
 ---
 
-### 8.4 Default 工具（category="default"）
+### 9.4 Media 工具（category="media"）
+
+多媒体渲染工具，主Agent可调用。
+
+#### render_html_to_image - 将HTML渲染为图片
+
+```python
+@ai_tools(category="media")
+async def render_html_to_image(
+    ctx: RunContext[ToolContext],
+    html: str,                     # HTML 内容
+    width: int = 800,             # 渲染宽度
+) -> str
+```
+
+#### render_markdown_to_image - 将Markdown渲染为图片
+
+```python
+@ai_tools(category="media")
+async def render_markdown_to_image(
+    ctx: RunContext[ToolContext],
+    markdown: str,                 # Markdown 内容
+    width: int = 800,             # 渲染宽度
+) -> str
+```
+
+---
+
+### 9.5 Default 工具（category="default"）
 
 通过 `create_subagent` 调用，用于文件操作、代码执行等。
 
@@ -1267,7 +1442,7 @@ async def list_directory(
 
 ---
 
-### 8.5 动态工具发现（未注册为 AI 工具）
+### 9.6 动态工具发现（未注册为 AI 工具）
 
 > **注意**：以下两个函数的 `@ai_tools` 装饰器已被注释掉，**不会自动注册为 AI 工具**。它们仅作为可手动调用的辅助函数存在。
 
@@ -1296,7 +1471,7 @@ async def list_available_tools(
 
 System Prompt 模块提供系统提示词的 CRUD 管理和向量检索功能，主要供 `create_subagent` 使用。
 
-### 9.1 模块导入
+### 10.1 模块导入
 
 ```python
 from gsuid_core.ai_core.system_prompt import (
@@ -1311,7 +1486,7 @@ from gsuid_core.ai_core.system_prompt import (
 )
 ```
 
-### 9.2 数据模型
+### 10.2 数据模型
 
 ```python
 class SystemPrompt(TypedDict):
@@ -1322,12 +1497,12 @@ class SystemPrompt(TypedDict):
     tags: List[str]    # 标签列表，支持标签过滤检索
 ```
 
-### 9.3 存储位置
+### 10.3 存储位置
 
 - JSON 文件：`AI_CORE_PATH / "system_prompts.json"`
 - 向量库 Collection：`system_prompts`
 
-### 9.4 CRUD 操作
+### 10.4 CRUD 操作
 
 ```python
 from gsuid_core.ai_core.system_prompt import (
@@ -1366,7 +1541,7 @@ update_prompt("my-plugin-math-expert", {"title": "高级数学专家"})
 delete_prompt("my-plugin-math-expert")
 ```
 
-### 9.5 向量检索
+### 10.5 向量检索
 
 ```python
 from gsuid_core.ai_core.system_prompt import search_system_prompt, get_best_match
@@ -1538,7 +1713,7 @@ queue = get_observation_queue()
 
 定时任务系统支持一次性任务和循环任务。
 
-### 12.1 模块导入
+### 13.1 模块导入
 
 定时任务工具位于 `buildin_tools/scheduler.py`，数据库模型位于 `scheduled_task/models.py`：
 
@@ -1559,7 +1734,7 @@ from gsuid_core.ai_core.buildin_tools import (
 from gsuid_core.ai_core.scheduled_task import AIScheduledTask
 ```
 
-### 12.2 数据模型
+### 13.2 数据模型
 
 ```python
 class AIScheduledTask(SQLModel, table=True):

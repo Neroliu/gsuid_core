@@ -16,6 +16,7 @@
     - [Entry 类型说明](#entry-类型说明)
     - [Entry 类型列表](#entry-类型列表)
     - [列表条目额外字段](#列表条目额外字段)
+  - [7. 查询会话关联 Agent](#7-查询会话关联-agent)
   - [6. 去重与合并规则](#6-去重与合并规则)
     - [前端渲染建议](#前端渲染建议)
 
@@ -39,6 +40,44 @@
 | date_to | string | 否 | 结束日期，格式 YYYY-MM-DD |
 | limit | int | 否 | 返回数量限制，默认 50，最大 200 |
 | offset | int | 否 | 偏移量，默认 0 |
+
+**列表条目字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| session_id | string | Session ID（如 `bot:onebot:group:123456`） |
+| session_uuid | string | Session 实例 UUID |
+| persona_name | string | Persona 名称 |
+| create_by | string | 创建来源（Chat/SubAgent/BuildPersona/LLM） |
+| created_at | float | 创建时间（Unix 时间戳） |
+| created_at_str | string | 创建时间格式化字符串 |
+| updated_at | float | 最后更新时间（Unix 时间戳） |
+| updated_at_str | string | 最后更新时间格式化字符串 |
+| ended_at | float \| null | 结束时间（Unix 时间戳），未结束为 null |
+| ended_at_str | string \| null | 结束时间格式化字符串 |
+| duration_seconds | float \| null | 运行时长（秒） |
+| entry_count | int | 日志条目总数 |
+| type_counts | object | 各类型条目数量统计 |
+| is_active | bool | 是否仍在运行 |
+| source | string | 数据来源：`"memory"`（内存）或 `"disk"`（磁盘） |
+| file_name | string \| null | 持久化文件名 |
+| linked_agents | array | 关联的 Agent 列表（见下表） |
+| linked_agent_count | int | 关联 Agent 数量 |
+
+**linked_agents 条目字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| agent_type | string | 关联类型：`"sub_agent"`、`"peer_agent"`、`"parent_agent"` |
+| session_id | string | 关联 Agent 的 Session ID |
+| session_uuid | string | 关联 Agent 的 Session UUID |
+| persona_name | string \| null | 关联 Agent 的 Persona 名称 |
+| create_by | string \| null | 关联 Agent 的创建来源 |
+| linked_at | float | 关联时间（Unix 时间戳） |
+| entry_count | int | 关联 Agent 的日志条目数 |
+| type_counts | object | 关联 Agent 的各类型条目统计 |
+| is_active | bool \| null | 关联 Agent 是否仍在运行 |
+| source | string | 关联 Agent 数据来源：`"memory"`、`"disk"` 或 `"unavailable"` |
 
 **响应示例**:
 
@@ -71,7 +110,26 @@
                 },
                 "is_active": true,
                 "source": "memory",
-                "file_name": "bot_onebot_group_123456_abc12345_20260510_103000.json"
+                "file_name": "bot_onebot_group_123456_abc12345_20260510_103000.json",
+                "linked_agents": [
+                    {
+                        "agent_type": "sub_agent",
+                        "session_id": "bot:onebot:group:123456:sub:planner",
+                        "session_uuid": "sub12345",
+                        "persona_name": "规划助手",
+                        "create_by": "SubAgent",
+                        "linked_at": 1715305805.0,
+                        "entry_count": 5,
+                        "type_counts": {
+                            "session_created": 1,
+                            "tool_call": 2,
+                            "tool_return": 2
+                        },
+                        "is_active": true,
+                        "source": "memory"
+                    }
+                ],
+                "linked_agent_count": 1
             },
             {
                 "session_id": "bot:onebot:group:789012",
@@ -95,7 +153,9 @@
                 },
                 "is_active": false,
                 "source": "disk",
-                "file_name": "bot_onebot_group_789012_def67890_20260509_100000.json"
+                "file_name": "bot_onebot_group_789012_def67890_20260509_100000.json",
+                "linked_agents": [],
+                "linked_agent_count": 0
             }
         ],
         "total": 2,
@@ -271,10 +331,30 @@ GET /api/ai/session_logs/bot:onebot:group:123456/abc12345/detail
             "BuildPersona": 5,
             "LLM": 3
         },
+        "linked_agent_total": 25,
+        "linked_agent_by_type": {
+            "sub_agent": 20,
+            "peer_agent": 0,
+            "parent_agent": 0
+        },
         "log_path": "F:/gsuid_core/data/ai_core/session_logs"
     }
 }
 ```
+
+**统计字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| total | int | 日志总数（去重后） |
+| today_count | int | 今日新增日志数 |
+| active_count | int | 当前活跃 Session 数 |
+| memory_count | int | 来自内存的 Session 数 |
+| disk_count | int | 来自磁盘的 Session 数 |
+| create_by_distribution | object | 按创建来源分布的计数 |
+| linked_agent_total | int | 所有 Session 关联的 Agent 总数 |
+| linked_agent_by_type | object | 按类型分布的关联 Agent 计数 |
+| log_path | string | 日志文件存储路径 |
 
 ---
 
@@ -316,6 +396,75 @@ GET /api/ai/session_logs/bot:onebot:group:123456/abc12345/detail
 | source | string | 数据来源：`"memory"`（内存活跃会话）或 `"disk"`（磁盘持久化文件） |
 | is_active | bool | 是否仍在运行（ended_at 为 null 时为 true） |
 | type_counts | object | 各类型条目数量统计 |
+| linked_agents | array | 关联的 Agent 列表（含 entry_count、type_counts、is_active、source 等 enriched 字段） |
+| linked_agent_count | int | 关联 Agent 数量 |
+
+---
+
+## 7. 查询会话关联 Agent
+
+**端点**: `GET /api/ai/session_logs/{session_id}/linked_agents`
+
+**描述**: 获取指定 Session 关联的所有 Agent（SubAgent、PeerAgent、ParentAgent 等）。支持按 `agent_type` 过滤，为前端展示 Agent 关系图提供数据。
+
+**路径参数**:
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| session_id | string | 是 | Session ID（如 `bot:onebot:group:123456`） |
+
+**Query 参数**:
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| agent_type | string | 否 | 关联类型过滤：`"sub_agent"`、`"peer_agent"`、`"parent_agent"`。不传返回全部 |
+
+**响应示例**:
+
+```json
+{
+    "status": 0,
+    "msg": "ok",
+    "data": {
+        "session_id": "bot:onebot:group:123456",
+        "session_uuid": "abc12345",
+        "linked_agents": [
+            {
+                "agent_type": "sub_agent",
+                "session_id": "bot:onebot:group:123456:sub:planner",
+                "session_uuid": "sub12345",
+                "persona_name": "规划助手",
+                "create_by": "SubAgent",
+                "linked_at": 1715305805.0,
+                "entry_count": 5,
+                "type_counts": {
+                    "session_created": 1,
+                    "tool_call": 2,
+                    "tool_return": 2
+                },
+                "is_active": true,
+                "source": "memory"
+            }
+        ],
+        "total": 1,
+        "by_type": {
+            "sub_agent": 1,
+            "peer_agent": 0,
+            "parent_agent": 0
+        }
+    }
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| session_id | string | Session ID |
+| session_uuid | string \| null | Session UUID |
+| linked_agents | array | 关联 Agent 列表（已 enriched，含 entry_count、type_counts、is_active、source） |
+| total | int | 关联 Agent 总数 |
+| by_type | object | 按类型统计的关联 Agent 数量 |
 
 ---
 

@@ -179,14 +179,14 @@ POST /api/plugins/{plugin_name}/reload
 **失败响应**：
 ```json
 {
-    "status": 0,
+    "status": 1,
     "msg": "❌ 未知的插件类型 xxx"
 }
 ```
 或者
 ```json
 {
-    "status": 0,
+    "status": 1,
     "msg": "❌ 重载失败: xxx"
 }
 ```

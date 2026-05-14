@@ -501,6 +501,68 @@ async def create_persona(
         }
 
 
+@app.post("/api/persona/add")
+async def add_persona(
+    data: Dict,
+    _: Dict = Depends(require_auth),
+) -> Dict:
+    """
+    直接添加新角色（简单模式）
+
+    前端只需输入角色名称和内容，即可直接保存人格。
+    适用于用户自己编写人格内容的场景。
+
+    Args:
+        data: 包含 name (角色名) 和 content (角色内容) 的请求体
+
+    Returns:
+        status: 0成功，1失败
+        data: 包含 name 和 content 的对象
+    """
+    name = data.get("name", "").strip()
+    content = data.get("content", "").strip()
+
+    if not name:
+        return {
+            "status": 1,
+            "msg": "请提供角色名称",
+            "data": None,
+        }
+
+    if not content:
+        return {
+            "status": 1,
+            "msg": "请提供角色内容",
+            "data": None,
+        }
+
+    # 检查角色是否已存在
+    persona = Persona(name)
+    if persona.exists():
+        return {
+            "status": 1,
+            "msg": f"角色 '{name}' 已存在",
+            "data": None,
+        }
+
+    try:
+        await save_persona(name, content)
+        return {
+            "status": 0,
+            "msg": "ok",
+            "data": {
+                "name": name,
+                "content": content,
+            },
+        }
+    except Exception as e:
+        return {
+            "status": 1,
+            "msg": f"添加角色失败: {str(e)}",
+            "data": None,
+        }
+
+
 @app.delete("/api/persona/{persona_name}")
 async def remove_persona(
     persona_name: str,

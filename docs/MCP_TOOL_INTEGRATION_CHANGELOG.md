@@ -105,6 +105,12 @@ MCP 工具注册时使用 `mcp_{server_name}_{tool_name}` 格式，避免不同 
 | DELETE | `/api/ai/mcp/{config_id}` | 删除 MCP 配置 |
 | POST | `/api/ai/mcp/{config_id}/toggle` | 切换启用/禁用状态 |
 | POST | `/api/ai/mcp/reload` | 热重载所有配置并重新注册工具 |
+| GET | `/api/ai/mcp/presets` | 获取 MCP 预设配置列表 |
+| GET | `/api/ai/mcp/{config_id}/tools` | 从已配置的 MCP 服务器发现工具 |
+| POST | `/api/ai/mcp/tools/discover` | 从临时配置发现工具（不保存） |
+| POST | `/api/ai/mcp/tools/import` | 从 JSON 导入 MCP 配置 |
+
+> **注意**：所有增删改和 toggle 操作会自动触发实时工具注册/注销，无需重启服务或手动调用 reload。
 
 ---
 
@@ -118,7 +124,21 @@ MCP 工具注册时使用 `mcp_{server_name}_{tool_name}` 格式，避免不同 
     "command": "uvx",
     "args": ["minimax-coding-plan-mcp"],
     "env": {"MINIMAX_API_KEY": "your_key"},
-    "enabled": true
+    "enabled": true,
+    "register_as_ai_tools": false,
+    "tools": [
+        {
+            "name": "web_search",
+            "description": "Web search tool",
+            "parameters": {
+                "query": {"type": "string", "required": true}
+            }
+        }
+    ],
+    "tool_permissions": {
+        "send_email": 0,
+        "query_data": 6
+    }
 }
 ```
 
@@ -129,6 +149,9 @@ MCP 工具注册时使用 `mcp_{server_name}_{tool_name}` 格式，避免不同 
 | `args` | `list[str]` | 命令参数列表 |
 | `env` | `dict[str, str]` | 环境变量字典 |
 | `enabled` | `bool` | 是否启用 |
+| `register_as_ai_tools` | `bool` | 是否将该 MCP 服务器的工具注册为 AI 工具，默认 `false` |
+| `tools` | `list[MCPToolDefinition]` | 工具定义列表，默认 `[]` |
+| `tool_permissions` | `dict[str, int]` | 工具权限配置，键为工具名，值为 pm 权限等级，默认 `{}` |
 
 ---
 

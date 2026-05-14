@@ -81,7 +81,9 @@ async def core_start_before_execute():
 | `init_default_personas()` | `ai_core/persona/startup.py` | 0 | 默认角色初始化 |
 | `init_memory_system()` | `ai_core/memory/startup.py` | 5 | 记忆系统初始化 |
 | `_on_start()` | `ai_core/mcp/startup.py` | 5 | MCP 工具注册 |
+| `init_meme_module()` | `ai_core/meme/startup.py` | 5 | 表情包模块初始化（目录创建、Qdrant Collection、打标 worker） |
 | `init_ai_core_statistics()` | `ai_core/statistics/startup.py` | 10 | AI 统计系统初始化 |
+| `_on_start()` (MCP Server) | `ai_core/mcp/server.py` | 10 | MCP Server 启动（将 to_ai 触发器暴露为 MCP 服务） |
 | `init_scheduled_tasks()` | `ai_core/scheduled_task/startup.py` | 0 | 定时任务初始化 |
 | 各插件 `all_start()` | `plugins/*/` | 0 | 插件资源下载/生成 |
 

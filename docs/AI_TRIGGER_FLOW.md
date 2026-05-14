@@ -79,18 +79,34 @@ gsuid_core/ai_core/
 │   └── models.py        # 配置数据模型
 ├── buildin_tools/       # 内建 AI 工具
 │   ├── __init__.py
+│   ├── agent_mesh_tools.py  # Agent 间通信与协作工具
 │   ├── command_executor.py  # 执行系统命令
 │   ├── database_query.py    # 数据库查询（好感度/记忆）
 │   ├── dynamic_tool_discovery.py  # 动态工具发现
-│   ├── favorability_manager.py  # 好感度管理
+│   ├── favorability_manager.py  # 好感度管理（增量/绝对值）
 │   ├── file_manager.py      # 文件管理 (read/write/execute/diff/list)
 │   ├── get_time.py          # 获取时间
+│   ├── html_render_tools.py # HTML/Markdown 渲染为图片
+│   ├── meme_tools.py        # 表情包工具（send/collect/search）
 │   ├── message_sender.py    # 消息发送
 │   ├── rag_search.py        # RAG 检索 (knowledge/image)
 │   ├── scheduler.py         # 预约定时任务（独立工具函数）
 │   ├── self_info.py         # 获取自身 Persona 信息
 │   ├── subagent.py          # 创建子Agent
-│   └── web_search.py        # Web 搜索
+│   ├── web_search.py        # Web 搜索
+│   └── web_fetch.py         # 网页抓取（转 Markdown）
+├── agent_mesh/             # Agent 间通信与协作协议
+│   ├── __init__.py          # 模块导出
+│   ├── models.py            # AgentTask / AgentMessage 数据模型
+│   ├── message_bus.py       # Agent 间异步消息总线
+│   ├── persistent_agent.py  # 持久化子 Agent
+│   └── coordinator.py       # 多 Agent 任务协调器（DAG 依赖图执行）
+├── multimodal/             # 多模态消息处理模块
+│   ├── __init__.py          # 模块导出
+│   ├── asr.py               # 语音转文字（ASR）
+│   ├── tts.py               # 文字转语音（TTS）
+│   ├── video.py             # 视频关键帧提取 + 多帧理解
+│   └── document.py          # 文档内容提取管道（PDF/Word/Excel → Markdown）
 ├── scheduled_task/       # 定时任务系统
 │   ├── __init__.py
 │   ├── models.py          # AIScheduledTask 数据模型
@@ -185,7 +201,18 @@ gsuid_core/ai_core/
 │   ├── config_manager.py # MCP 配置管理器（增删改查 + MCPToolDefinition）
 │   ├── mcp_tool_caller.py # 通用 MCP 工具调用模块（call_mcp_tool）
 │   ├── mcp_tools_config.py # MCP 工具配置（websearch/image_understand 的 MCP 工具 ID）
+│   ├── mcp_presets.py    # MCP 预设配置（MiniMax、Firecrawl 等）
+│   ├── server.py         # MCP Server（将 to_ai 触发器对外暴露为 MCP 服务）
 │   └── startup.py        # 启动时自动注册 MCP 工具 + 热重载
+├── meme/                 # 表情包模块
+│   ├── config.py         # 配置项（StringConfig）
+│   ├── database_model.py # AiMemeRecord SQLModel 表
+│   ├── filter.py         # 去重 + 质量过滤
+│   ├── library.py        # 文件 + DB + Qdrant 操作
+│   ├── observer.py       # 消息流监听
+│   ├── selector.py       # 检索 + 决策
+│   ├── startup.py        # @on_core_start 钩子
+│   └── tagger.py         # VLM 打标引擎
 ├── image_understand/     # 图片理解模块
 │   ├── __init__.py       # 模块导出（understand_image）
 │   └── understand.py     # 统一图片理解接口（MCP 驱动）
@@ -326,8 +353,8 @@ async def handle_event(ws: _Bot, msg: MessageReceive, is_http: bool = False):
 
 ```python
 # handle_ai.py
-ABSOLUTE_MAX_LENGTH = 14000  # 第一层：绝对上限，超过直接硬截断
-MAX_SUMMARY_LENGTH = 8000    # 第二层：摘要阈值，超过则调用子Agent智能摘要
+ABSOLUTE_MAX_LENGTH = 60000  # 第一层：绝对上限，超过直接硬截断
+MAX_SUMMARY_LENGTH = 15000    # 第二层：摘要阈值，超过则调用子Agent智能摘要
 
 # 第一层：硬截断（防止子Agent Token爆炸）
 if len(event.raw_text) > ABSOLUTE_MAX_LENGTH:
@@ -350,11 +377,11 @@ if len(event.raw_text) > MAX_SUMMARY_LENGTH:
 
 | 层级 | 触发条件 | 处理方式 | 目的 |
 |------|---------|---------|------|
-| 第一层 | `> 14000` 字符 | 硬截断至 14000 字符 + 截断提示 | 防止子Agent Token爆炸、API超限 |
-| 第二层 | `> 8000` 字符 | 调用子Agent智能摘要 | 压缩长文本，保留关键信息 |
-| 无需处理 | `≤ 8000` 字符 | 直接传递给主Agent | 正常短消息处理 |
+| 第一层 | `> 60000` 字符 | 硬截断至 60000 字符 + 截断提示 | 防止子Agent Token爆炸、API超限 |
+| 第二层 | `> 15000` 字符 | 调用子Agent智能摘要 | 压缩长文本，保留关键信息 |
+| 无需处理 | `≤ 15000` 字符 | 直接传递给主Agent | 正常短消息处理 |
 
-> **说明**：第二层阈值从 2000 调整为 8000，因为现代 LLM 上下文窗口动辄 128K（约 10 万汉字），2000 字符对 LLM 来说毫无压力。对于代码、报错日志等长文本，摘要会丢失细节，应尽量避免自动摘要。
+> **说明**：第二层阈值从 2000 调整为 15000，因为现代 LLM 上下文窗口动辄 128K（约 10 万汉字），2000 字符对 LLM 来说毫无压力。对于代码、报错日志等长文本，摘要会丢失细节，应尽量避免自动摘要。
 
 **新增 System Prompt** (`system_prompt/defaults.py`):
 - ID: `default-text-summarizer`
@@ -465,8 +492,8 @@ if "提及应答" in ai_mode:
 
 ```
 1. 双层长度防护
-   ├── > 14000 字符: 硬截断（防子Agent Token爆炸）
-   └── > 8000 字符: 调用 create_subagent 智能摘要
+   ├── > 60000 字符: 硬截断（防子Agent Token爆炸）
+   └── > 15000 字符: 调用 create_subagent 智能摘要
 
 2. 意图识别
    └── classifier_service.predict_async(query)
@@ -732,7 +759,7 @@ self._histories[storage_event] = deque(maxlen=self._max_messages)
 #### 5.3.2 空闲 Session 清理
 
 ```python
-IDLE_THRESHOLD = 86400  # 空闲阈值（秒），默认 1 天
+IDLE_THRESHOLD = 1800  # 空闲阈值（秒），默认 30 分钟
 CLEANUP_INTERVAL = 3600  # 清理检查间隔（秒），默认 1 小时
 
 # 启动清理循环
@@ -746,7 +773,7 @@ async def cleanup_idle_sessions(self, idle_threshold: int = None):
         self.remove_ai_session(session_id)
 ```
 
-**效果**: 超过 1 天未活跃的 Session 自动从内存中清除。
+**效果**: 超过 30 分钟未活跃的 Session 自动从内存中清除。
 
 #### 5.3.3 内存保护总结
 
@@ -755,7 +782,7 @@ async def cleanup_idle_sessions(self, idle_threshold: int = None):
 | 滑动窗口 | `deque(maxlen=40)` | 每 Session 最多 40 条消息 |
 | AI 历史限制 | `MAX_AI_HISTORY_LENGTH=30` | AI 对话历史不超过 30 条 |
 | Agent 内部截断 | `max_history=50` | `GsCoreAIAgent.history` 超过 50 条时安全截断（含 ToolCall/ToolReturn 配对保护） |
-| 空闲清理 | `IDLE_THRESHOLD=86400` (1天) | 1天不活跃的 Session 自动清除 |
+| 空闲清理 | `IDLE_THRESHOLD=1800` (30分钟) | 30 分钟不活跃的 Session 自动清除 |
 | 定时清理 | `CLEANUP_INTERVAL=3600` (1小时) | 每小时检查一次空闲 Session |
 
 > **⚠️ 重要改进**：`deque(maxlen=40)` 仅按消息条数截断，存在"隐形 Token 爆炸"风险。
@@ -923,7 +950,7 @@ fallback_result = await _fallback_agent.run(
 
 > ⚠️ **方案演进**：v1 → 错误地用 `_strip_tool_schema_from_history()`（无效，schema 在 Agent 内部 system prompt）；v2 → 创建新 Agent 但仍传完整 `self.history`（LLM 需自行梳理）；v3 → 提取事实 + 打包消息 + message_history 置空，但丢失了 LLM 中间推理、保留了 deps_type/deps；**v4 最终：按轮次提取事实+推理、去掉冗余参数、修正错误处理**。
 
-> 详细技术报告见 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md`
+> 详细技术报告见 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md`（如文件存在）
 
 ### 5.5 工具注册系统与 Agent 架构
 
@@ -1070,6 +1097,10 @@ async def my_tool(ctx: RunContext[ToolContext], ...) -> str:
 | `cancel_scheduled_task` | 取消任务 |
 | `pause_scheduled_task` | 暂停任务 |
 | `resume_scheduled_task` | 恢复任务 |
+| `create_persistent_agent_tool` | 创建持久化子 Agent |
+| `send_agent_task_tool` | 向持久化 Agent 发送任务 |
+| `list_agents_tool` | 列出所有活跃的持久化 Agent |
+| `stop_agent_tool` | 停止指定的持久化 Agent |
 
 #### 5.5.9 触发器桥接工具 (`category="by_trigger"`)
 
@@ -1295,7 +1326,7 @@ result = await call_mcp_tool(
 
 **热重载**: 通过 `POST /api/ai/mcp/reload` 可以在运行时重新加载所有 MCP 配置并重新注册工具，无需重启服务。
 
-> **详细前端集成文档**: 见 [MCP_FRONTEND_INTEGRATION.md](./MCP_FRONTEND_INTEGRATION.md)
+> **详细文档**: 见 [MCP_TOOL_INTEGRATION_CHANGELOG.md](./MCP_TOOL_INTEGRATION_CHANGELOG.md)（变更记录）、[MCP_TOOL_PERMISSIONS.md](./MCP_TOOL_PERMISSIONS.md)（权限配置）、[MCP_SERVER.md](./MCP_SERVER.md)（MCP Server 对外暴露）
 
 #### 5.5.12 核心函数
 
@@ -2113,7 +2144,7 @@ MCP 配置 API 允许用户通过前端自由管理 MCP 服务器配置，支持
 
 **热重载**: `POST /api/ai/mcp/reload` 会清除已注册的 MCP 工具，重新加载配置文件，并重新连接所有启用的 MCP 服务器注册工具。
 
-> **详细前端集成文档**: 见 [MCP_FRONTEND_INTEGRATION.md](./MCP_FRONTEND_INTEGRATION.md)
+> **详细文档**: 见 [MCP_TOOL_INTEGRATION_CHANGELOG.md](./MCP_TOOL_INTEGRATION_CHANGELOG.md)（变更记录）、[MCP_TOOL_PERMISSIONS.md](./MCP_TOOL_PERMISSIONS.md)（权限配置）、[MCP_SERVER.md](./MCP_SERVER.md)（MCP Server 对外暴露）
 
 ### 8.0.1 嵌入模型配置 API
 
@@ -3615,8 +3646,8 @@ web_search(query)
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │  3. 双层长度防护 (D-10 修复)                                           │
-│     ├── 第一层：if len > 14000: 硬截断 + 截断提示（防子Agent爆炸）     │
-│     └── 第二层：if len > 8000:  调用 create_subagent 智能摘要          │
+│     ├── 第一层：if len > 60000: 硬截断 + 截断提示（防子Agent爆炸）     │
+│     └── 第二层：if len > 15000:  调用 create_subagent 智能摘要          │
 └──────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -3845,6 +3876,18 @@ web_search(query)
 | [`gsuid_core/ai_core/memory/retrieval/dual_route.py`](gsuid_core/ai_core/memory/retrieval/dual_route.py) | 双路检索引擎 |
 | [`gsuid_core/ai_core/memory/database/models.py`](gsuid_core/ai_core/memory/database/models.py) | 记忆系统数据模型 |
 | [`gsuid_core/ai_core/memory/vector/ops.py`](gsuid_core/ai_core/memory/vector/ops.py) | 向量存储操作 |
+| [`gsuid_core/ai_core/agent_mesh/__init__.py`](gsuid_core/ai_core/agent_mesh/__init__.py) | Agent Mesh 模块导出 |
+| [`gsuid_core/ai_core/agent_mesh/persistent_agent.py`](gsuid_core/ai_core/agent_mesh/persistent_agent.py) | 持久化 Agent |
+| [`gsuid_core/ai_core/agent_mesh/coordinator.py`](gsuid_core/ai_core/agent_mesh/coordinator.py) | DAG 任务协调器 |
+| [`gsuid_core/ai_core/agent_mesh/message_bus.py`](gsuid_core/ai_core/agent_mesh/message_bus.py) | Agent 消息总线 |
+| [`gsuid_core/ai_core/multimodal/__init__.py`](gsuid_core/ai_core/multimodal/__init__.py) | 多模态模块导出 |
+| [`gsuid_core/ai_core/multimodal/asr.py`](gsuid_core/ai_core/multimodal/asr.py) | 语音转文字 |
+| [`gsuid_core/ai_core/multimodal/tts.py`](gsuid_core/ai_core/multimodal/tts.py) | 文字转语音 |
+| [`gsuid_core/ai_core/multimodal/video.py`](gsuid_core/ai_core/multimodal/video.py) | 视频理解 |
+| [`gsuid_core/ai_core/multimodal/document.py`](gsuid_core/ai_core/multimodal/document.py) | 文档提取 |
+| [`gsuid_core/ai_core/persona/mood.py`](gsuid_core/ai_core/persona/mood.py) | 情绪状态机 |
+| [`gsuid_core/ai_core/persona/group_context.py`](gsuid_core/ai_core/persona/group_context.py) | 群聊适应性 |
+| [`gsuid_core/ai_core/buildin_tools/agent_mesh_tools.py`](gsuid_core/ai_core/buildin_tools/agent_mesh_tools.py) | Agent Mesh AI 工具 |
 
 ### B. 配置热重载矩阵
 
@@ -3927,5 +3970,5 @@ Session ID 格式说明:
 | 2026-04-19 | v3.1 | 全面核对 ai_core 代码与文档一致性，修正以下内容：1.1 模块结构（新增 dynamic_tool_discovery.py、dataclass_models.py、startup.py、scheduled_task/scheduler.py，移除 adapter.py、episode.py）；2.3 MAX_SUMMARY_LENGTH 4000→8000；3.1 AI 处理流程（8步：含记忆检索、send_chat_result、observe）；5.1 Session 创建（create_agent 移除 model_name、新增 create_by="Chat"，mtime 缓存，session_id 格式 bot:{bot_id}:group:{group_id}）；5.3 内存保护（DEFAULT_MAX_MESSAGES=40、MAX_AI_HISTORY_LENGTH=30、移除 MAX_HISTORY_CHARS、Agent 内部截断含 ToolCall/ToolReturn 配对保护）；5.5.2 @ai_tools 新增 check_func/**check_kwargs 参数和智能参数注入；5.5.7 buildin 工具新增 query_user_memory；5.5.10-5.5.11 动态工具发现和核心函数签名；6.4 巡检流程（_pre_check_session + _inspect_session_with_semaphore 两阶段）；6.5 决策 Prompt（mood/context_hook 替代 reason，_parse_decision_json，_strip_message_quotes）；6.7.1 INACTIVE_THRESHOLD_HOURS=1；6.7.2 _get_bot_for_session 三级查找（gss.active_bot）；7.2 模块结构（scheduler.py、startup.py）；7.4.2 独立工具函数替代 manage_scheduled_task；7.6-7.11 架构图和使用流程；8.1 统计模块结构（dataclass_models.py、startup.py）；8.3 数据库模型（BaseIDModel、AITokenUsageByType、api_529_count、memory 字段）；8.4 持久化机制（startup.py）；8.6 record_token_usage 新增 chat_type 参数；10.2 移除 episode.py；10.4 Scope Key 格式修正（ScopeType.GROUP:789012）；10.5 ObservationRecord 移除 ai_reply；10.6/10.11 batch_interval_seconds=1800、llm_semaphore_limit=2；10.9 数据库模型（SQLModel 非 BaseIDModel、AIMemHierarchicalGraphMeta 在 hiergraph.py）；10.12.3 启动初始化（无 create_all、IngestionWorker() 无参）；11.3 Heartbeat 流程图（mood/context_hook）；附录 B model_name 热重载 ✅；附录 C Session ID 格式 bot:{bot_id}:group:{group_id} |
 | 2026-04-24 | v3.2 | Memory 系统 Bug 修复与性能优化：修复 B-01（Edge 去重 key 拼接 f-string 错误，worker.py）；修复 B-02（entity 计数虚高导致频繁重建 hiergraph，models.py/entity.py/worker.py）；修复 B-03（_apply_entity_assignments 新建 Category 初始化缺失，hiergraph.py）；优化 P-01（Entity 向量去重串行改并行，models.py）；优化 P-04（Reranker 三路并行化，dual_route.py）；优化 P-03（ORM Relationship lazy='selectin' 改为 'noload'，消除 N+1 查询，models.py）；修复 M-06（Speaker 强制 Layer-1 归类硬性保障，hiergraph.py）；新增 System-1 One-hop 邻居扩展（system1.py/ops.py）；新增已知问题 D-12~D-17 |
 | 2026-05-05 | v4.0 | **MCP 重构 + Image Understand + Meme Module + Web Search 统一接口**：1.1 模块结构（新增 mcp/mcp_tool_caller.py、mcp/mcp_tools_config.py、image_understand/ 模块、meme/ 模块）；5.5.7 buildin 工具新增 web_fetch、send_meme/collect_meme/search_meme；5.5.12 MCP 工具集成全面更新（新增 register_as_ai_tools/tools 字段、MCP 工具 ID 格式、mcp_tools_config 配置、通用 call_mcp_tool 调用、MCP 预设配置、4 个新 API 端点）；8.0 MCP 配置 API 新增 tools/discover/import/presets 端点；新增 10.14 Meme 表情包模块（引用 MEME_MODULE.md）；新增 10.15 Image Understand 图片理解模块（MCP 驱动，GsCoreAIAgent._prepare_user_message 自动处理）；新增 10.16 Web Search 统一搜索接口（Tavily/Exa/MCP 三选一，MiniMax 搜索迁移至 MCP）；附录 A 新增 MCP/ImageUnderstand/Meme/WebSearch 相关文件路径 |
-| 2026-05-11 | v4.1 | **修复 D-20（强制总结偏离用户问题）v3 到 v4 演进**：v3 实现保留 `_last_user_question`、`_extract_known_facts()`、message_history 置空、无工具 Agent；v4 在 v3 基础上进一步把 `_extract_known_facts` 替换为 `_extract_run_context`（按轮次保留工具返回+LLM 中间推理），去掉 fallback Agent 冗余的 `deps_type/deps` 参数，修正错误处理避免消息双发；更新 5.6.3 节；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT.md` 技术报告；新增 `docs/FORCED_SUMMARY_OPTIMIZATION_REPORT_v4.md` 最终版报告 |
+| 2026-05-11 | v4.1 | **修复 D-20（强制总结偏离用户问题）v3 到 v4 演进**：v3 实现保留 `_last_user_question`、`_extract_known_facts()`、message_history 置空、无工具 Agent；v4 在 v3 基础上进一步把 `_extract_known_facts` 替换为 `_extract_run_context`（按轮次保留工具返回+LLM 中间推理），去掉 fallback Agent 冗余的 `deps_type/deps` 参数，修正错误处理避免消息双发；更新 5.6.3 节 |
 | 2026-05-14 | v4.2 | **AI 总开关控制全面修复**：1. `handle_ai.py` 中 `enable_ai` 改为函数内动态读取（`ai_config.get_config("enable").data`），确保 WebConsole 切换开关后无需重启即可生效；2. 所有 `@on_core_start` 钩子增加 `enable_ai` 检查：rag/startup.py、persona/startup.py、memory/startup.py、statistics/startup.py（heartbeat）、scheduled_task/startup.py、mcp/startup.py、mcp/server.py；3. `scheduled_task/executor.py` 执行前增加 `enable_ai` 检查；4. `heartbeat/inspector.py` 启动前增加 `enable_ai` 检查；5. 更新 2.2 节、8.4.1 节、10.12.3 节、12.2 节文档描述；6. 新增已知问题 D-21（AI 总开关控制不全面） |
