@@ -3,7 +3,6 @@ from datetime import datetime
 from gsuid_core.aps import scheduler
 from gsuid_core.logger import logger
 from gsuid_core.server import on_core_shutdown
-from gsuid_core.ai_core.heartbeat import start_heartbeat_inspector
 from gsuid_core.ai_core.statistics import statistics_manager
 from gsuid_core.ai_core.session_registry import get_ai_session_registry
 
@@ -15,6 +14,8 @@ async def init_ai_core_statistics():
     await registry.start_cleanup_loop()
 
     # 启动定时巡检（heartbeat/inspector.py 内部会检查 enable_ai）
+    from gsuid_core.ai_core.heartbeat import start_heartbeat_inspector
+
     start_heartbeat_inspector()
 
     statistics_manager._today = datetime.now().strftime("%Y-%m-%d")
