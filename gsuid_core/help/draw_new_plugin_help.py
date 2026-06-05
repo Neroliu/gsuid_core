@@ -25,22 +25,42 @@ TEXT_PATH = Path(__file__).parent / "texture2d"
 pic_quality: int = pic_gen_config.get_config("PicQuality").data
 
 
+# 图标资源包路径（/app/napcat/config/icons.zip 解压到项目目录）
+# 新增命令时从此目录随机取图标，确保不重复即可
+ICON_PACK_PATH = Path(__file__).parent.parent.parent / "BBBUID" / "bbb_data" / "icons"
+_used_icons: set = set()
+
+
 def find_icon(name: str, icon_path: Path = ICON_PATH):
+    # 优先从 icon_path 精确匹配
     for icon in icon_path.glob("*.png"):
         if icon.stem == name:
-            _r = icon
-            break
-    else:
-        for icon in icon_path.glob("*.png"):
-            if icon.stem in name:
-                _r = icon
-                break
-        else:
-            if (icon_path / "通用.png").exists():
-                _r = icon_path / "通用.png"
-            else:
-                _r = random.choice(list(icon_path.iterdir()))
-    return Image.open(_r)
+            return Image.open(icon)
+
+    # 其次从 icon_path 模糊匹配
+    for icon in icon_path.glob("*.png"):
+        if icon.stem in name:
+            return Image.open(icon)
+
+    # 无自定义图标时，从图标资源包随机取一个未使用的图标
+    if ICON_PACK_PATH.exists():
+        available = [
+            p for p in ICON_PACK_PATH.glob("*.png")
+            if p.name not in _used_icons
+        ]
+        if not available:
+            # 资源包图标全部用过，重置并复用
+            _used_icons.clear()
+            available = list(ICON_PACK_PATH.glob("*.png"))
+        if available:
+            chosen = random.choice(available)
+            _used_icons.add(chosen.name)
+            return Image.open(chosen)
+
+    # 兜底：icon_path 中的通用图标或随机图标
+    if (icon_path / "通用.png").exists():
+        return Image.open(icon_path / "通用.png")
+    return Image.open(random.choice(list(icon_path.iterdir())))
 
 
 def calculate_string_length(s: str):
@@ -125,6 +145,7 @@ def _get_new_help(
     highlight_bg: Optional[Image.Image] = None,
 ):
     help_path = get_res_path("help") / f"{plugin_name}_{pm}.jpg"
+    _used_icons.clear()
 
     if help_path.exists() and plugin_name in cache and cache[plugin_name] and enable_cache:
         return convert_img_sync(Image.open(help_path))
@@ -374,7 +395,7 @@ def _get_new_help(
 
     img.paste(
         footer,
-        ((w - footer.width) // 2, h - footer.height - 20),
+        ((w - footer.width) // 2, h - footer.height),
         footer,
     )
 
